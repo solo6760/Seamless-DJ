@@ -28,8 +28,18 @@ data class Track(
     val introOffsetSec: Int = 20,
     val segmentDurationSec: Int = 90,
     val beatTimesMs: List<Long> = emptyList(),
-    val isBeatAnalyzing: Boolean = false
+    val isBeatAnalyzing: Boolean = false,
+    val energyScore: Int = 50,
+    val lufs: Float = -14.0f,
+    val transitionType: TransitionType = TransitionType.CROSSFADE
 ) {
+
+    val energyCategory: String
+        get() = when {
+            energyScore >= 70 -> "High 🔴"
+            energyScore >= 40 -> "Medium 🟡"
+            else -> "Low 🟢"
+        }
 
     val formattedDuration: String
         get() {

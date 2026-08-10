@@ -301,6 +301,24 @@ fun DjDeckScreen(
                                     }
                                 }
                             }
+
+                            // Energy Level Badge
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "⚡ Energy: ${activeTrack.energyCategory}",
+                                        style = MaterialTheme.typography.labelLarge,
+                                        color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
                         }
                     }
 
@@ -455,19 +473,21 @@ fun DjDeckScreen(
                                 overflow = TextOverflow.Ellipsis
                             )
                             Text(
-                                text = "${next.artist} • ${next.bpm} BPM",
+                                text = "${next.artist} • ${next.bpm} BPM • Energy: ${next.energyCategory}",
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1
                             )
                         }
 
-                        val score = com.example.util.CamelotWheel.getCompatibilityScore(activeTrack?.musicalKey, next.musicalKey)
-                        val badge = com.example.util.CamelotWheel.getSmoothnessInfo(score)
+                        val score = if (activeTrack != null) {
+                            com.example.util.SmartPlaylistOptimizer.calculateCompatibilityScore(activeTrack, next)
+                        } else 1.0f
+                        val transitionType = com.example.data.model.selectTransitionType(score)
 
                         Surface(
                             color = when {
-                                score >= 0.8f -> StatusGreen.copy(alpha = 0.15f)
+                                score >= 0.7f -> StatusGreen.copy(alpha = 0.15f)
                                 score >= 0.5f -> WarmOrange.copy(alpha = 0.15f)
                                 else -> StatusGray.copy(alpha = 0.15f)
                             },
@@ -477,25 +497,10 @@ fun DjDeckScreen(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(
-                                    imageVector = when {
-                                        score >= 0.8f -> Icons.Default.CheckCircle
-                                        score >= 0.5f -> Icons.Default.Tune
-                                        else -> Icons.Default.HelpOutline
-                                    },
-                                    contentDescription = badge.title,
-                                    tint = when {
-                                        score >= 0.8f -> StatusGreen
-                                        score >= 0.5f -> WarmOrange
-                                        else -> StatusGray
-                                    },
-                                    modifier = Modifier.size(12.dp)
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
                                 Text(
-                                    text = badge.title,
+                                    text = "${transitionType.iconSymbol} ${transitionType.displayName} (${(score * 100).toInt()}%)",
                                     color = when {
-                                        score >= 0.8f -> StatusGreen
+                                        score >= 0.7f -> StatusGreen
                                         score >= 0.5f -> WarmOrange
                                         else -> StatusGray
                                     },
@@ -710,8 +715,10 @@ fun DjDeckScreen(
                     } else {
                         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             queueList.forEachIndexed { index, track ->
-                                val score = com.example.util.CamelotWheel.getCompatibilityScore(activeTrack?.musicalKey, track.musicalKey)
-                                val badge = com.example.util.CamelotWheel.getSmoothnessInfo(score)
+                                val score = if (activeTrack != null) {
+                                    com.example.util.SmartPlaylistOptimizer.calculateCompatibilityScore(activeTrack, track)
+                                } else 1.0f
+                                val transitionType = com.example.data.model.selectTransitionType(score)
 
                                 Card(
                                     modifier = Modifier
@@ -747,7 +754,7 @@ fun DjDeckScreen(
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                             Text(
-                                                text = "${track.artist} • ${track.bpm} BPM",
+                                                text = "${track.artist} • ${track.bpm} BPM • Energy: ${track.energyCategory}",
                                                 style = MaterialTheme.typography.bodyMedium,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                 maxLines = 1
@@ -759,7 +766,7 @@ fun DjDeckScreen(
                                         // Compatibility Score Badge (Icon + Color + Text)
                                         Surface(
                                             color = when {
-                                                score >= 0.8f -> StatusGreen.copy(alpha = 0.15f)
+                                                score >= 0.7f -> StatusGreen.copy(alpha = 0.15f)
                                                 score >= 0.5f -> WarmOrange.copy(alpha = 0.15f)
                                                 else -> StatusGray.copy(alpha = 0.15f)
                                             },
@@ -769,25 +776,10 @@ fun DjDeckScreen(
                                                 modifier = Modifier.padding(horizontal = 6.dp, vertical = 4.dp),
                                                 verticalAlignment = Alignment.CenterVertically
                                             ) {
-                                                Icon(
-                                                    imageVector = when {
-                                                        score >= 0.8f -> Icons.Default.CheckCircle
-                                                        score >= 0.5f -> Icons.Default.Tune
-                                                        else -> Icons.Default.HelpOutline
-                                                    },
-                                                    contentDescription = badge.title,
-                                                    tint = when {
-                                                        score >= 0.8f -> StatusGreen
-                                                        score >= 0.5f -> WarmOrange
-                                                        else -> StatusGray
-                                                    },
-                                                    modifier = Modifier.size(12.dp)
-                                                )
-                                                Spacer(modifier = Modifier.width(4.dp))
                                                 Text(
-                                                    text = badge.title,
+                                                    text = "${transitionType.iconSymbol} ${(score * 100).toInt()}%",
                                                     color = when {
-                                                        score >= 0.8f -> StatusGreen
+                                                        score >= 0.7f -> StatusGreen
                                                         score >= 0.5f -> WarmOrange
                                                         else -> StatusGray
                                                     },

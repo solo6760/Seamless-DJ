@@ -21,7 +21,9 @@ data class DspAnalysisResult(
     val camelotKey: String,
     val keyConfidence: Int,
     val confidence: String, // "high", "medium", "low"
-    val status: BpmStatus
+    val status: BpmStatus,
+    val energyScore: Int = 50,
+    val lufs: Float = -14.0f
 )
 
 class AudioDspAnalyzer(private val context: Context) {
@@ -65,6 +67,9 @@ class AudioDspAnalyzer(private val context: Context) {
             // 2. Estimate Musical Key using Chromagram & Pitch Profiles
             val (keyResult, camelotCode, keyConf) = estimateKey(samples, sampleRate)
 
+            // 3. Calculate Energy Score & LUFS Loudness
+            val (energyScore, lufs) = calculateEnergyAndLufs(samples, sampleRate)
+
             val isValidBpm = detectedBpm in 40..220
             val overallConfidence = when {
                 bpmConf >= 60 && keyConf >= 50 -> "high"
@@ -73,7 +78,7 @@ class AudioDspAnalyzer(private val context: Context) {
             }
             val finalBpm = if (isValidBpm) detectedBpm else (if (track.bpm in 40..220) track.bpm else 120)
 
-            Log.d(TAG, "DSP Analysis complete for '${track.title}': BPM=$finalBpm ($bpmConf%), Key=$keyResult ($keyConf%, $camelotCode)")
+            Log.d(TAG, "DSP Analysis complete for '${track.title}': BPM=$finalBpm ($bpmConf%), Key=$keyResult ($keyConf%, $camelotCode), Energy=$energyScore, LUFS=${String.format("%.1f", lufs)}")
 
             DspAnalysisResult(
                 bpm = finalBpm,
@@ -82,7 +87,9 @@ class AudioDspAnalyzer(private val context: Context) {
                 camelotKey = camelotCode,
                 keyConfidence = keyConf,
                 confidence = overallConfidence,
-                status = if (isValidBpm) BpmStatus.RESOLVED else BpmStatus.UNKNOWN
+                status = if (isValidBpm) BpmStatus.RESOLVED else BpmStatus.UNKNOWN,
+                energyScore = energyScore,
+                lufs = lufs
             )
         } catch (e: Exception) {
             Log.e(TAG, "Error performing DSP analysis for track ${track.title}", e)
@@ -484,6 +491,90 @@ class AudioDspAnalyzer(private val context: Context) {
             }
             len = len shl 1
         }
+    }
+
+    /**
+     * Energy Analysis (RMS + Spectral Flux) & BS.1770-4 LUFS Loudness Measurement
+     */
+    private fun calculateEnergyAndLufs(samples: FloatArray, sampleRate: Int): Pair<Int, Float> {
+        if (samples.isEmpty()) return Pair(50, -14.0f)
+
+        // 1. RMS Loudness
+        var sumSq = 0.0
+        for (s in samples) {
+            sumSq += (s * s).toDouble()
+        }
+        val rms = sqrt(sumSq / samples.size).toFloat()
+        val rmsNormalized = (rms / 0.30f * 100f).coerceIn(0f, 100f)
+
+        // 2. Spectral Flux Activity
+        val numFrames = (samples.size - FFT_SIZE) / HOP_SIZE
+        var totalFlux = 0f
+        if (numFrames > 0) {
+            val prevSpectrum = FloatArray(FFT_SIZE / 2)
+            val real = FloatArray(FFT_SIZE)
+            val imag = FloatArray(FFT_SIZE)
+
+            for (f in 0 until numFrames) {
+                val offset = f * HOP_SIZE
+                for (i in 0 until FFT_SIZE) {
+                    real[i] = samples[offset + i]
+                    imag[i] = 0f
+                }
+                fft(real, imag)
+
+                var frameFlux = 0f
+                for (k in 0 until FFT_SIZE / 2) {
+                    val mag = sqrt(real[k] * real[k] + imag[k] * imag[k])
+                    val diff = mag - prevSpectrum[k]
+                    if (diff > 0) frameFlux += diff
+                    prevSpectrum[k] = mag
+                }
+                totalFlux += frameFlux
+            }
+        }
+        val avgFlux = if (numFrames > 0) totalFlux / numFrames else 0f
+        val fluxNormalized = (avgFlux / 12f * 100f).coerceIn(0f, 100f)
+
+        val energyScore = (0.6f * rmsNormalized + 0.4f * fluxNormalized).roundToInt().coerceIn(0, 100)
+
+        // 3. ITU-R BS.1770-4 LUFS Loudness
+        val b0 = 1.53512485958697f
+        val b1 = -2.69169618940638f
+        val b2 = 1.19839281085285f
+        val a1 = -1.69065929318241f
+        val a2 = 0.73248077421585f
+
+        val hp_b0 = 1.0f
+        val hp_b1 = -2.0f
+        val hp_b2 = 1.0f
+        val hp_a1 = -1.99004745483398f
+        val hp_a2 = 0.99007225036621f
+
+        var x1 = 0f; var x2 = 0f; var y1 = 0f; var y2 = 0f
+        var hpx1 = 0f; var hpx2 = 0f; var hpy1 = 0f; var hpy2 = 0f
+
+        var kPowerSum = 0.0
+        for (s in samples) {
+            val y = b0 * s + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2
+            x2 = x1; x1 = s
+            y2 = y1; y1 = y
+
+            val hpy = hp_b0 * y + hp_b1 * hpx1 + hp_b2 * hpx2 - hp_a1 * hpy1 - hp_a2 * hpy2
+            hpx2 = hpx1; hpx1 = y
+            hpy2 = hpy1; hpy1 = hpy
+
+            kPowerSum += (hpy * hpy).toDouble()
+        }
+
+        val meanKPower = kPowerSum / samples.size
+        val lufs = if (meanKPower > 1e-10) {
+            (-0.691 + 10.0 * log10(meanKPower)).toFloat().coerceIn(-60.0f, 0.0f)
+        } else {
+            -14.0f
+        }
+
+        return Pair(energyScore, lufs)
     }
 
     private class FloatArrayList(initialCapacity: Int = 100_000) {

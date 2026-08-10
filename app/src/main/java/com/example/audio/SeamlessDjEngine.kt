@@ -43,7 +43,9 @@ data class DjEngineState(
     val deckBSpinning: Boolean = false,
     val automixEnabled: Boolean = true,
     val automixModeName: String = "Spotify/Apple Style Automix (Equal Power Beat-Blend)",
-    val statusMessage: String = "Ready for party"
+    val statusMessage: String = "Ready for party",
+    val activeTransitionType: com.example.data.model.TransitionType = com.example.data.model.TransitionType.CROSSFADE,
+    val lastCompatibilityScore: Float = 1.0f
 )
 
 class SeamlessDjEngine(private val context: Context) {
@@ -328,33 +330,42 @@ class SeamlessDjEngine(private val context: Context) {
         val currentActive = state.activeDeck
         val incomingDeck = if (currentActive == ActiveDeck.DECK_A) ActiveDeck.DECK_B else ActiveDeck.DECK_A
 
-        // Calculate Camelot Key Harmonic Compatibility Score (0.0 to 1.0)
+        // Calculate weighted compatibility score (50% Key, 30% BPM, 20% Energy)
+        val compatibilityScore = if (currentTrack != null) {
+            com.example.util.SmartPlaylistOptimizer.calculateCompatibilityScore(currentTrack, incomingTrack)
+        } else 1.0f
+
+        val selectedTransition = com.example.data.model.selectTransitionType(compatibilityScore)
         val keyScore = com.example.util.CamelotWheel.getCompatibilityScore(currentTrack?.musicalKey, incomingTrack.musicalKey)
-        val smoothnessInfo = com.example.util.CamelotWheel.getSmoothnessInfo(keyScore)
 
         val outgoingBpmKnown = currentTrack != null && currentTrack.bpmStatus == BpmStatus.RESOLVED && currentTrack.bpm in 40..220
         val incomingBpmKnown = incomingTrack.bpmStatus == BpmStatus.RESOLVED && incomingTrack.bpm in 40..220
         val isBeatMatched = keyScore >= 0.8f && outgoingBpmKnown && incomingBpmKnown
 
-        // Determine Fade Strategy & Duration based on Camelot Wheel compatibility
+        // Determine Fade Strategy & Duration
         val fadeDurationMs = when {
-            isBeatMatched -> 2200L // Tighter ~2.2s beat-matched window
-            keyScore >= 0.5f -> (djSettings.crossfadeDurationSec * 1000L).coerceAtLeast(15000L) // Standard ~20s
-            else -> 28000L // Very gradual ~28s fade to mask key clash
+            isBeatMatched -> 2200L
+            compatibilityScore >= 0.7f -> (djSettings.crossfadeDurationSec * 1000L).coerceAtLeast(12000L)
+            else -> 20000L
         }
 
-        val syncStatusText = when {
-            isBeatMatched -> "Apple AutoMix Beat-Matched Blend (${currentTrack?.bpm}➔${incomingTrack.bpm} BPM)"
-            keyScore >= 0.5f -> "Harmonic Standard Blend (${smoothnessInfo.title})"
-            else -> "Gradual Masking Fade (Key Clash)"
-        }
+        val syncStatusText = "${selectedTransition.iconSymbol} ${selectedTransition.displayName} • Compatibility: ${(compatibilityScore * 100).toInt()}%"
 
         _engineState.value = state.copy(
             isCrossfading = true,
             deckASpinning = true,
             deckBSpinning = true,
+            activeTransitionType = selectedTransition,
+            lastCompatibilityScore = compatibilityScore,
             statusMessage = "Automixing: $reason • $syncStatusText"
         )
+
+        // Calculate LUFS Loudness Normalization Gains (Target: -14.0 LUFS)
+        val outgoingLufs = currentTrack?.lufs ?: -14.0f
+        val outgoingLufsScale = Math.pow(10.0, ((-14.0f - outgoingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.2f, 2.0f)
+
+        val incomingLufs = incomingTrack.lufs
+        val incomingLufsScale = Math.pow(10.0, ((-14.0f - incomingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.2f, 2.0f)
 
         // 1. Prepare incoming deck player with beat boundary snapping
         val rawStartMs = (incomingTrack.introOffsetSec * 1000L).coerceAtLeast(0L)
@@ -375,7 +386,7 @@ class SeamlessDjEngine(private val context: Context) {
         var shouldRampSpeed = false
         if (isBeatMatched && currentTrack != null) {
             val ratio = currentTrack.bpm.toFloat() / incomingTrack.bpm.toFloat()
-            if (ratio in 0.80f..1.20f) { // Clamped safe ratio without audio distortion
+            if (ratio in 0.80f..1.20f) {
                 initialSpeedRatio = ratio
                 shouldRampSpeed = true
                 try {
@@ -390,14 +401,39 @@ class SeamlessDjEngine(private val context: Context) {
             }
         }
 
-        // 2. Perform trigonometric equal-power crossfade with tempo-ramp
+        // 2. Perform transition with transition processor and LUFS loudness normalization
         val steps = 25
         val stepDelay = (fadeDurationMs / steps).coerceAtLeast(40L)
 
+        val eqFadeProcessor = com.example.audio.processor.EqFadeProcessor()
+        val filterSweepProcessor = com.example.audio.processor.FilterSweepProcessor()
+        val echoOutProcessor = com.example.audio.processor.EchoOutProcessor()
+
         for (i in 0..steps) {
             val progress = i.toFloat() / steps
-            val outgoingVol = kotlin.math.cos(progress * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
-            val incomingVol = kotlin.math.sin(progress * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
+
+            val (rawOut, rawIn) = when (selectedTransition) {
+                com.example.data.model.TransitionType.CROSSFADE -> {
+                    val outV = kotlin.math.cos(progress * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
+                    val inV = kotlin.math.sin(progress * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
+                    Pair(outV, inV)
+                }
+                com.example.data.model.TransitionType.EQ_FADE -> {
+                    val eqV = eqFadeProcessor.calculateEqVolumes(progress)
+                    Pair(eqV.outgoingMainVolume * eqV.outgoingBassGain, eqV.incomingMainVolume * eqV.incomingBassGain)
+                }
+                com.example.data.model.TransitionType.FILTER_SWEEP -> {
+                    val fs = filterSweepProcessor.calculateFilterState(progress)
+                    Pair(fs.outgoingVolume, fs.incomingVolume)
+                }
+                com.example.data.model.TransitionType.ECHO_OUT -> {
+                    val echo = echoOutProcessor.calculateEchoState(progress)
+                    Pair(echo.outgoingVolume, echo.incomingVolume)
+                }
+            }
+
+            val outgoingVol = (rawOut * outgoingLufsScale).coerceIn(0f, 1f)
+            val incomingVol = (rawIn * incomingLufsScale).coerceIn(0f, 1f)
 
             if (currentActive == ActiveDeck.DECK_A) {
                 playerA?.setVolume(outgoingVol, outgoingVol)

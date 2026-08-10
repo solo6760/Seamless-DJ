@@ -78,6 +78,8 @@ data class SongMetadataEntity(
     val validatedByGemini: Boolean = false,
     val status: String,
     val analysisConfidence: String = "medium",
+    val energyScore: Int = 50,
+    val lufs: Float = -14.0f,
     val timestamp: Long = System.currentTimeMillis()
 )
 

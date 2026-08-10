@@ -127,6 +127,9 @@ class DjRepository(private val db: AppDatabase) {
                 }
             }
 
+            var energy = dspResult?.energyScore ?: cachedMeta?.energyScore ?: 50
+            var lufsVal = dspResult?.lufs ?: cachedMeta?.lufs ?: -14.0f
+
             val metaEntity = SongMetadataEntity(
                 trackKey = trackKey,
                 bpm = bpm,
@@ -136,7 +139,9 @@ class DjRepository(private val db: AppDatabase) {
                 keyConfidence = keyConf,
                 validatedByGemini = isValidatedByGemini,
                 status = statusStr,
-                analysisConfidence = overallConf
+                analysisConfidence = overallConf,
+                energyScore = energy,
+                lufs = lufsVal
             )
             db.songMetadataDao().insertMetadata(metaEntity)
 
@@ -144,7 +149,9 @@ class DjRepository(private val db: AppDatabase) {
             track.copy(
                 bpm = if (bpm in 40..220) bpm else track.bpm,
                 bpmStatus = if (bpm in 40..220) BpmStatus.RESOLVED else bpmStatusEnum,
-                musicalKey = if (key != "Unknown") key else track.musicalKey
+                musicalKey = if (key != "Unknown") key else track.musicalKey,
+                energyScore = energy,
+                lufs = lufsVal
             )
         }
 

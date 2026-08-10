@@ -8,12 +8,12 @@ object SmartPlaylistOptimizer {
 
     /**
      * Calculates compatibility score between currentTrack and nextTrack.
-     * Formula per specification:
-     * - Key compatibility (Camelot): 60% weight
-     * - BPM similarity: 30% weight (1 - abs(current_bpm - next_bpm) / max(current_bpm, next_bpm))
-     * - Beat detection quality: 10% weight (1.0 if beat data reliable, 0.5 otherwise)
+     * Tier 1 Specification Formula:
+     * - Harmonic (Key) compatibility: 50% weight (Camelot Wheel scoring)
+     * - BPM similarity: 30% weight (BPM ratio scoring)
+     * - Energy continuity: 20% weight (penalizes energy jumps)
      *
-     * Final score = 0.6 * camelot_score + 0.3 * bpm_similarity + 0.1 * beat_quality
+     * Final score = 0.5 * camelot_score + 0.3 * bpm_similarity + 0.2 * energy_score
      */
     fun calculateCompatibilityScore(currentTrack: Track, nextTrack: Track): Float {
         // 1. Camelot Key compatibility (0.0 to 1.0)
@@ -26,11 +26,17 @@ object SmartPlaylistOptimizer {
         val maxBpm = max(curBpm, nextBpm).toFloat()
         val bpmSimilarity = (1.0f - (absDiff / maxBpm)).coerceIn(0.0f, 1.0f)
 
-        // 3. Beat Detection Quality (1.0 if reliable beat data exists, 0.5 otherwise)
-        val beatQuality = if (nextTrack.beatTimesMs.isNotEmpty()) 1.0f else 0.5f
+        // 3. Energy Continuity (0.0 to 1.0)
+        val energyDiff = abs(currentTrack.energyScore - nextTrack.energyScore)
+        val energyScore = when {
+            energyDiff < 10 -> 1.0f
+            energyDiff <= 20 -> 0.8f
+            energyDiff <= 30 -> 0.5f
+            else -> 0.2f
+        }
 
         // Weighted sum
-        return (0.6f * camelotScore) + (0.3f * bpmSimilarity) + (0.1f * beatQuality)
+        return (0.5f * camelotScore) + (0.3f * bpmSimilarity) + (0.2f * energyScore)
     }
 
     /**
