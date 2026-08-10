@@ -1,0 +1,6 @@
+{
+  "name": "Seamless DJ",
+  "description": "Continuous house party DJ app with automated beat-matched crossfades, segment playback, dual decks, and SoundCloud/YouTube playlist support.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

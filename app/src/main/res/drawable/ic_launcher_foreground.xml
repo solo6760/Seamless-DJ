@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Vinyl Outer Disc -->
+    <path
+        android:fillColor="#1A1829"
+        android:strokeColor="#8B5CF6"
+        android:strokeWidth="1.5"
+        android:pathData="M54,20 A34,34 0 1,0 54,88 A34,34 0 1,0 54,20 Z" />
+    <!-- Vinyl Grooves -->
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#3B2D54"
+        android:strokeWidth="1"
+        android:pathData="M54,26 A28,28 0 1,0 54,82 A28,28 0 1,0 54,26 Z" />
+    <path
+        android:fillColor="#00000000"
+        android:strokeColor="#2E2342"
+        android:strokeWidth="1"
+        android:pathData="M54,32 A22,22 0 1,0 54,76 A22,22 0 1,0 54,32 Z" />
+    <!-- Center Label -->
+    <path
+        android:fillColor="#EC4899"
+        android:pathData="M54,42 A12,12 0 1,0 54,66 A12,12 0 1,0 54,42 Z" />
+    <!-- Spindle Hole -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,51 A3,3 0 1,0 54,57 A3,3 0 1,0 54,51 Z" />
+    <!-- Neon Soundwave Accents -->
+    <path
+        android:fillColor="#06B6D4"
+        android:pathData="M18,50 h4 v8 h-4 z M12,46 h3 v16 h-3 z M24,42 h4 v24 h-4 z M80,42 h4 v24 h-4 z M86,46 h3 v16 h-3 z M91,50 h4 v8 h-4 z" />
+</vector>
