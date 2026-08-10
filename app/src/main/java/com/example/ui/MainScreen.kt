@@ -2,10 +2,13 @@ package com.example.ui
 
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
+import com.example.ui.components.OptimizePlaylistDialog
 import com.example.ui.screens.DjDeckScreen
 import com.example.ui.screens.DjSettingsScreen
 import com.example.ui.screens.GuestRequestScreen
@@ -24,6 +27,22 @@ fun MainScreen(
     modifier: Modifier = Modifier
 ) {
     val navController = rememberNavController()
+    val pendingPlaylist by viewModel.pendingPlaylistForDialog.collectAsState()
+    val isOptimizingQueue by viewModel.isOptimizingQueue.collectAsState()
+
+    pendingPlaylist?.let { playlist ->
+        OptimizePlaylistDialog(
+            playlist = playlist,
+            isOptimizing = isOptimizingQueue,
+            onDismiss = { viewModel.dismissPlaylistDialog() },
+            onConfirm = { startTrackIndex, optimizeOrder ->
+                viewModel.confirmAndStartPlaylist(playlist, startTrackIndex, optimizeOrder)
+                navController.navigate(Routes.DECK) {
+                    popUpTo(Routes.DECK) { inclusive = true }
+                }
+            }
+        )
+    }
 
     NavHost(
         navController = navController,

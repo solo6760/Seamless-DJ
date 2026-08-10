@@ -291,6 +291,101 @@ fun DjSettingsScreen(
                 }
             }
 
+            // Gemini API Key Management Card
+            val currentApiKey by viewModel.apiKey.collectAsState()
+            var showUpdateKeyDialog by remember { mutableStateOf(false) }
+
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = DjSurface),
+                shape = RoundedCornerShape(16.dp),
+                border = CardDefaults.outlinedCardBorder()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Gemini API Key (BPM Auto-Lookup)",
+                                fontWeight = FontWeight.Bold,
+                                color = TextPrimary,
+                                fontSize = 14.sp
+                            )
+                            Text(
+                                text = "Powers live Google Search grounded BPM queries for queued songs.",
+                                color = TextSecondary,
+                                fontSize = 11.sp
+                            )
+                        }
+
+                        Surface(
+                            color = if (!currentApiKey.isNullOrBlank()) NeonEmerald.copy(alpha = 0.2f) else NeonAmber.copy(alpha = 0.2f),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text(
+                                text = if (!currentApiKey.isNullOrBlank()) "Configured" else "Not Set",
+                                color = if (!currentApiKey.isNullOrBlank()) NeonEmerald else NeonAmber,
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 10.sp,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        Button(
+                            onClick = { showUpdateKeyDialog = true },
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("update_api_key_settings_button"),
+                            shape = RoundedCornerShape(10.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = DjSurfaceVariant)
+                        ) {
+                            Text(
+                                text = if (currentApiKey.isNullOrBlank()) "Set API Key" else "Update API Key",
+                                fontSize = 12.sp,
+                                color = TextPrimary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        if (!currentApiKey.isNullOrBlank()) {
+                            OutlinedButton(
+                                onClick = { viewModel.clearGeminiApiKey() },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("clear_api_key_settings_button"),
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("Clear Key", fontSize = 12.sp, color = Color(0xFFFF6B6B))
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (showUpdateKeyDialog) {
+                com.example.ui.components.ApiKeyOnboardingDialog(
+                    onSaveKey = { key, onResult ->
+                        viewModel.saveGeminiApiKey(key) { success, err ->
+                            if (success) {
+                                showUpdateKeyDialog = false
+                            }
+                            onResult(success, err)
+                        }
+                    },
+                    onSkip = { showUpdateKeyDialog = false }
+                )
+            }
+
             Spacer(modifier = Modifier.weight(1f))
 
             // Save Settings Button

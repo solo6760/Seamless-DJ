@@ -1,9 +1,16 @@
 package com.example.data.model
 
+enum class BpmStatus {
+    RESOLVED,
+    FETCHING,
+    UNKNOWN
+}
+
 enum class TrackSource {
     YOUTUBE,
     SOUNDCLOUD,
-    CURATED
+    CURATED,
+    LOCAL_FILE
 }
 
 data class Track(
@@ -14,12 +21,16 @@ data class Track(
     val durationMs: Long,
     val streamUrl: String,
     val bpm: Int = 124,
+    val bpmStatus: BpmStatus = BpmStatus.UNKNOWN,
     val musicalKey: String = "8A / Fm",
     val source: TrackSource = TrackSource.YOUTUBE,
     val sourceUrl: String = "",
     val introOffsetSec: Int = 20,
-    val segmentDurationSec: Int = 90
+    val segmentDurationSec: Int = 90,
+    val beatTimesMs: List<Long> = emptyList(),
+    val isBeatAnalyzing: Boolean = false
 ) {
+
     val formattedDuration: String
         get() {
             val totalSec = durationMs / 1000

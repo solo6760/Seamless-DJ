@@ -56,3 +56,31 @@ interface SettingsDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveSettings(settings: DjSettingsEntity)
 }
+
+@Dao
+interface SongBpmDao {
+    @Query("SELECT * FROM song_bpm_cache WHERE trackKey = :trackKey LIMIT 1")
+    suspend fun getBpm(trackKey: String): SongBpmEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBpm(entity: SongBpmEntity)
+}
+
+@Dao
+interface SongMetadataDao {
+    @Query("SELECT * FROM song_metadata_cache WHERE trackKey = :trackKey LIMIT 1")
+    suspend fun getMetadata(trackKey: String): SongMetadataEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertMetadata(entity: SongMetadataEntity)
+}
+
+@Dao
+interface BeatCacheDao {
+    @Query("SELECT * FROM beat_cache WHERE trackKey = :trackKey LIMIT 1")
+    suspend fun getBeatCache(trackKey: String): BeatCacheEntity?
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertBeatCache(entity: BeatCacheEntity)
+}
+

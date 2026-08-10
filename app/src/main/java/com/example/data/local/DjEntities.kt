@@ -56,3 +56,30 @@ data class DjSettingsEntity(
     val partyLightsEnabled: Boolean,
     val partyRoomCode: String
 )
+
+@Entity(tableName = "song_bpm_cache")
+data class SongBpmEntity(
+    @PrimaryKey val trackKey: String,
+    val bpm: Int,
+    val status: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "song_metadata_cache")
+data class SongMetadataEntity(
+    @PrimaryKey val trackKey: String,
+    val bpm: Int,
+    val musicalKey: String,
+    val camelotKey: String,
+    val status: String,
+    val timestamp: Long = System.currentTimeMillis()
+)
+
+@Entity(tableName = "beat_cache")
+data class BeatCacheEntity(
+    @PrimaryKey val trackKey: String,
+    val beatTimesCsv: String,
+    val bpm: Int,
+    val timestamp: Long = System.currentTimeMillis()
+)
+

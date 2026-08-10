@@ -10,15 +10,22 @@ import androidx.room.RoomDatabase
         PlaylistEntity::class,
         TrackEntity::class,
         GuestRequestEntity::class,
-        DjSettingsEntity::class
+        DjSettingsEntity::class,
+        SongBpmEntity::class,
+        SongMetadataEntity::class,
+        BeatCacheEntity::class
     ],
-    version = 1,
+    version = 3,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun playlistDao(): PlaylistDao
     abstract fun guestRequestDao(): GuestRequestDao
     abstract fun settingsDao(): SettingsDao
+    abstract fun songBpmDao(): SongBpmDao
+    abstract fun songMetadataDao(): SongMetadataDao
+    abstract fun beatCacheDao(): BeatCacheDao
+
 
     companion object {
         @Volatile

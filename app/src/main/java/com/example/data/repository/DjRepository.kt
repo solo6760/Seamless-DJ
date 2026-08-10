@@ -1,11 +1,18 @@
 package com.example.data.repository
 
+import com.example.audio.BeatDetectionEngine
 import com.example.data.local.AppDatabase
+import com.example.data.local.BeatCacheEntity
 import com.example.data.local.DjSettingsEntity
 import com.example.data.local.GuestRequestEntity
 import com.example.data.local.PlaylistEntity
+import com.example.data.local.SongBpmEntity
+import com.example.data.local.SongMetadataEntity
 import com.example.data.local.TrackEntity
+
 import com.example.data.model.*
+import com.example.data.security.ApiKeyManager
+import com.example.data.service.GeminiBpmService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -51,6 +58,133 @@ class DjRepository(private val db: AppDatabase) {
         db.settingsDao().saveSettings(newSettings.toEntity())
     }
 
+    suspend fun resolveTrackMetadata(
+        track: Track,
+        apiKeyManager: ApiKeyManager,
+        geminiBpmService: GeminiBpmService,
+        beatDetectionEngine: BeatDetectionEngine
+    ): Track = withContext(Dispatchers.IO) {
+        val trackKey = "${track.artist.lowercase().trim()}_${track.title.lowercase().trim()}"
+
+        // 1. Check song_metadata_cache table
+        val cachedMeta = db.songMetadataDao().getMetadata(trackKey)
+        val trackWithMeta = if (cachedMeta != null) {
+            val status = try { BpmStatus.valueOf(cachedMeta.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
+            val resolvedBpm = if (cachedMeta.bpm > 0) cachedMeta.bpm else track.bpm
+            track.copy(
+                bpm = resolvedBpm,
+                bpmStatus = if (cachedMeta.bpm > 0) BpmStatus.RESOLVED else status,
+                musicalKey = if (cachedMeta.musicalKey.isNotBlank()) cachedMeta.musicalKey else track.musicalKey
+            )
+        } else {
+            // Check legacy song_bpm_cache
+            val cachedBpm = db.songBpmDao().getBpm(trackKey)
+            if (cachedBpm != null) {
+                val status = try { BpmStatus.valueOf(cachedBpm.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
+                track.copy(
+                    bpm = if (cachedBpm.bpm > 0) cachedBpm.bpm else track.bpm,
+                    bpmStatus = if (cachedBpm.bpm > 0) BpmStatus.RESOLVED else status
+                )
+            } else {
+                // Fetch via Gemini
+                val apiKey = apiKeyManager.getApiKey() ?: ""
+                if (apiKey.isBlank()) {
+                    val metaEntity = SongMetadataEntity(
+                        trackKey = trackKey,
+                        bpm = -1,
+                        musicalKey = track.musicalKey,
+                        camelotKey = "",
+                        status = BpmStatus.UNKNOWN.name
+                    )
+                    db.songMetadataDao().insertMetadata(metaEntity)
+                    track.copy(bpmStatus = BpmStatus.UNKNOWN)
+                } else {
+                    val metaResult = geminiBpmService.lookupMetadata(track.title, track.artist, apiKey)
+                    val resolvedBpm = metaResult.bpm ?: -1
+                    val resolvedKey = if (metaResult.musicalKey.isNotBlank()) metaResult.musicalKey else "Unknown"
+                    val status = if (resolvedBpm in 40..220) BpmStatus.RESOLVED else BpmStatus.UNKNOWN
+
+                    val metaEntity = SongMetadataEntity(
+                        trackKey = trackKey,
+                        bpm = resolvedBpm,
+                        musicalKey = resolvedKey,
+                        camelotKey = metaResult.camelotKey,
+                        status = status.name
+                    )
+                    db.songMetadataDao().insertMetadata(metaEntity)
+
+                    track.copy(
+                        bpm = if (resolvedBpm in 40..220) resolvedBpm else track.bpm,
+                        bpmStatus = status,
+                        musicalKey = if (resolvedKey != "Unknown") resolvedKey else track.musicalKey
+                    )
+                }
+            }
+        }
+
+        // 2. Resolve beat times from beat_cache or BeatDetectionEngine
+        val cachedBeats = db.beatCacheDao().getBeatCache(trackKey)
+        if (cachedBeats != null && cachedBeats.beatTimesCsv.isNotBlank()) {
+            val timesList = cachedBeats.beatTimesCsv.split(",").mapNotNull { it.trim().toLongOrNull() }
+            return@withContext trackWithMeta.copy(
+                beatTimesMs = timesList,
+                isBeatAnalyzing = false
+            )
+        } else {
+            val detectedTimes = beatDetectionEngine.analyzeBeatTimes(trackWithMeta)
+            val csvStr = detectedTimes.joinToString(",")
+            val beatEntity = com.example.data.local.BeatCacheEntity(
+                trackKey = trackKey,
+                beatTimesCsv = csvStr,
+                bpm = trackWithMeta.bpm
+            )
+            db.beatCacheDao().insertBeatCache(beatEntity)
+
+            return@withContext trackWithMeta.copy(
+                beatTimesMs = detectedTimes,
+                isBeatAnalyzing = false
+            )
+        }
+    }
+
+    suspend fun resolveTrackBpm(
+        track: Track,
+        apiKeyManager: ApiKeyManager,
+        geminiBpmService: GeminiBpmService
+    ): Track = withContext(Dispatchers.IO) {
+        val trackKey = "${track.artist.lowercase().trim()}_${track.title.lowercase().trim()}"
+
+        // 1. Check local Room database table
+        val cached = db.songBpmDao().getBpm(trackKey)
+        if (cached != null) {
+            val status = try { BpmStatus.valueOf(cached.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
+            return@withContext track.copy(
+                bpm = if (cached.bpm > 0) cached.bpm else track.bpm,
+                bpmStatus = if (cached.bpm > 0) BpmStatus.RESOLVED else status
+            )
+        }
+
+        // 2. Not cached: fetch via Gemini API with Search Grounding
+        val apiKey = apiKeyManager.getApiKey() ?: ""
+        if (apiKey.isBlank()) {
+            val entity = SongBpmEntity(trackKey = trackKey, bpm = -1, status = BpmStatus.UNKNOWN.name)
+            db.songBpmDao().insertBpm(entity)
+            return@withContext track.copy(bpmStatus = BpmStatus.UNKNOWN)
+        }
+
+        val resolvedBpm = geminiBpmService.lookupBpm(track.title, track.artist, apiKey)
+        if (resolvedBpm != null && resolvedBpm in 40..220) {
+            val entity = SongBpmEntity(trackKey = trackKey, bpm = resolvedBpm, status = BpmStatus.RESOLVED.name)
+            db.songBpmDao().insertBpm(entity)
+            return@withContext track.copy(bpm = resolvedBpm, bpmStatus = BpmStatus.RESOLVED)
+        } else {
+            val entity = SongBpmEntity(trackKey = trackKey, bpm = -1, status = BpmStatus.UNKNOWN.name)
+            db.songBpmDao().insertBpm(entity)
+            return@withContext track.copy(bpmStatus = BpmStatus.UNKNOWN)
+        }
+    }
+
+
     suspend fun addGuestRequest(track: Track, requestedBy: String) = withContext(Dispatchers.IO) {
         val req = GuestRequest(
             id = "req_${System.currentTimeMillis()}",
@@ -66,6 +200,11 @@ class DjRepository(private val db: AppDatabase) {
 
     suspend fun removeRequest(requestId: String) = withContext(Dispatchers.IO) {
         db.guestRequestDao().deleteRequest(requestId)
+    }
+
+    suspend fun saveImportedPlaylist(playlist: Playlist) = withContext(Dispatchers.IO) {
+        db.playlistDao().insertPlaylist(playlist.toEntity())
+        db.playlistDao().insertTracks(playlist.tracks.mapIndexed { idx, t -> t.toEntity(playlist.id, idx) })
     }
 
     suspend fun createCustomPlaylist(name: String, description: String, sourceUrl: String, tracks: List<Track>) = withContext(Dispatchers.IO) {
@@ -95,35 +234,25 @@ class DjRepository(private val db: AppDatabase) {
         val playlistId = if (cleanUrl.contains("list=")) {
             cleanUrl.substringAfter("list=").substringBefore("&")
         } else {
-            "PL3N4v983u1y7Y5d"
+            "PLplXQ2cg9B_qrCVd1J_iId5SvP8Kf_BfS"
         }
 
         val timestamp = System.currentTimeMillis()
-        val playlistTitle = "YouTube Playlist Mix (${playlistId.take(10)})"
+        val playlistTitle = "YouTube Playlist Mix (${playlistId.take(12)})"
 
-        // Video IDs for iconic music tracks that embed and play seamlessly on YouTube
-        val videoItems = listOf(
-            Triple("5qap5aO4i9A", "Lofi Beats & Chill Synth", "YouTube Music Live"),
-            Triple("kJQP7kiw5Fk", "Despacito Electro Remix", "YouTube Trending"),
-            Triple("fJ9rUzIMcZQ", "Bohemian Rhapsody House Flip", "YouTube Club Stream"),
-            Triple("2Vv-BfVoq4g", "Ed Sheeran Shape of You EDM Mix", "YouTube DJ Sessions"),
-            Triple("kXYiU_JCYtU", "Numb Synthwave Tribute", "YouTube Sound System"),
-            Triple("L_LUpnjgPso", "Titanium Festival Vocal Mix", "YouTube EDM Mainstage")
-        )
-
-        val tracks = videoItems.mapIndexed { idx, (vidId, title, artist) ->
+        val tracks = (1..8).map { idx ->
             Track(
-                id = "yt_pl_${timestamp}_${idx + 1}",
-                title = title,
-                artist = artist,
-                albumArtUrl = "https://img.youtube.com/vi/$vidId/hqdefault.jpg",
+                id = "yt_pl_${timestamp}_$idx",
+                title = "YouTube Playlist Track #$idx",
+                artist = "YouTube Playlist ($playlistId)",
+                albumArtUrl = "https://img.youtube.com/vi/5qap5aO4i9A/hqdefault.jpg",
                 durationMs = 210000L,
-                streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-${(idx % 6) + 1}.mp3",
+                streamUrl = "", // Empty streamUrl so stock MP3 will not play
                 bpm = 126 + idx,
                 musicalKey = "${(idx + 5)}A / Fm",
                 source = TrackSource.YOUTUBE,
-                sourceUrl = "https://www.youtube.com/watch?v=$vidId&list=$playlistId",
-                introOffsetSec = 18,
+                sourceUrl = "https://www.youtube.com/playlist?list=$playlistId&index=$idx",
+                introOffsetSec = 0,
                 segmentDurationSec = 90
             )
         }
@@ -131,8 +260,8 @@ class DjRepository(private val db: AppDatabase) {
         val newPlaylist = Playlist(
             id = "yt_playlist_$timestamp",
             name = playlistTitle,
-            description = "Imported YouTube Playlist (${tracks.size} tracks) with live YouTube embed player & Spotify/Apple style Automix.",
-            coverUrl = "https://img.youtube.com/vi/${videoItems.first().first}/hqdefault.jpg",
+            description = "Live YouTube Playlist (List ID: $playlistId) with direct YouTube embed video & audio stream.",
+            coverUrl = "https://img.youtube.com/vi/5qap5aO4i9A/hqdefault.jpg",
             source = PlaylistSource.YOUTUBE,
             genre = "YouTube Party Mix",
             avgBpm = 128,
@@ -155,20 +284,28 @@ class DjRepository(private val db: AppDatabase) {
                 val vidId = when {
                     cleanUrl.contains("v=") -> cleanUrl.substringAfter("v=").substringBefore("&")
                     cleanUrl.contains("youtu.be/") -> cleanUrl.substringAfter("youtu.be/").substringBefore("?").substringBefore("&")
-                    else -> "5qap5aO4i9A"
+                    else -> ""
                 }
+                val listId = if (cleanUrl.contains("list=")) cleanUrl.substringAfter("list=").substringBefore("&") else ""
+                
+                val sourceUrl = when {
+                    listId.isNotBlank() -> "https://www.youtube.com/playlist?list=$listId"
+                    vidId.isNotBlank() -> "https://www.youtube.com/watch?v=$vidId"
+                    else -> cleanUrl
+                }
+
                 Track(
                     id = "yt_${System.currentTimeMillis()}",
-                    title = "YouTube Track ($vidId)",
-                    artist = "YouTube Live Stream",
-                    albumArtUrl = "https://img.youtube.com/vi/$vidId/hqdefault.jpg",
+                    title = if (listId.isNotBlank()) "YouTube Playlist ($listId)" else "YouTube Video ($vidId)",
+                    artist = "YouTube Live Media",
+                    albumArtUrl = if (vidId.isNotBlank()) "https://img.youtube.com/vi/$vidId/hqdefault.jpg" else "https://img.youtube.com/vi/5qap5aO4i9A/hqdefault.jpg",
                     durationMs = 210000L,
-                    streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+                    streamUrl = "", // Empty so MediaPlayer doesn't play stock audio
                     bpm = 128,
                     musicalKey = "11B / A",
                     source = TrackSource.YOUTUBE,
-                    sourceUrl = "https://www.youtube.com/watch?v=$vidId",
-                    introOffsetSec = 20,
+                    sourceUrl = sourceUrl,
+                    introOffsetSec = 0,
                     segmentDurationSec = 90
                 )
             }

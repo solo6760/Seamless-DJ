@@ -44,12 +44,15 @@ fun YouTubePlayerWidget(
 
     val embedUrl = remember(videoId, track.sourceUrl, isPlaying) {
         when {
-            videoId.isNotBlank() -> {
-                "https://www.youtube.com/embed/$videoId?autoplay=${if (isPlaying) 1 else 0}&enablejsapi=1&playsinline=1&controls=1"
-            }
             track.sourceUrl.contains("list=") -> {
                 val listId = track.sourceUrl.substringAfter("list=").substringBefore("&")
-                "https://www.youtube.com/embed/videoseries?list=$listId&autoplay=${if (isPlaying) 1 else 0}&playsinline=1"
+                val indexParam = if (track.sourceUrl.contains("index=")) {
+                    "&index=" + track.sourceUrl.substringAfter("index=").substringBefore("&")
+                } else ""
+                "https://www.youtube.com/embed/videoseries?list=$listId$indexParam&autoplay=${if (isPlaying) 1 else 0}&enablejsapi=1&playsinline=1"
+            }
+            videoId.isNotBlank() -> {
+                "https://www.youtube.com/embed/$videoId?autoplay=${if (isPlaying) 1 else 0}&enablejsapi=1&playsinline=1&controls=1"
             }
             else -> {
                 "https://www.youtube.com/embed/5qap5aO4i9A?autoplay=1&playsinline=1"
@@ -80,7 +83,7 @@ fun YouTubePlayerWidget(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .height(180.dp)
+            .height(210.dp)
             .clip(RoundedCornerShape(16.dp))
             .border(1.dp, YouTubeRed, RoundedCornerShape(16.dp))
             .testTag("youtube_embedded_player_card"),

@@ -233,13 +233,59 @@ fun TurntableDeck(
                         shape = RoundedCornerShape(8.dp),
                         modifier = Modifier.border(1.dp, DjCardBorder, RoundedCornerShape(8.dp))
                     ) {
-                        Text(
-                            text = "⚡ ${track.bpm} BPM",
-                            fontSize = 10.sp,
-                            color = NeonAmber,
-                            fontWeight = FontWeight.Medium,
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
+                        ) {
+                            when (track.bpmStatus) {
+                                com.example.data.model.BpmStatus.FETCHING -> {
+                                    CircularProgressIndicator(
+                                        modifier = Modifier.size(8.dp),
+                                        color = NeonCyan,
+                                        strokeWidth = 1.5.dp
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = "Analyzing Gemini Key/BPM...",
+                                        fontSize = 10.sp,
+                                        color = NeonCyan,
+                                        fontWeight = FontWeight.Medium
+                                    )
+                                }
+                                com.example.data.model.BpmStatus.RESOLVED -> {
+                                    Text(
+                                        text = "⚡ ${track.bpm} BPM",
+                                        fontSize = 10.sp,
+                                        color = NeonAmber,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+                                com.example.data.model.BpmStatus.UNKNOWN -> {
+                                    Text(
+                                        text = if (track.bpm in 40..220) "⚡ ${track.bpm} BPM" else "BPM unknown",
+                                        fontSize = 10.sp,
+                                        color = if (track.bpm in 40..220) NeonAmber else TextMuted,
+                                        fontWeight = FontWeight.Normal
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    if (track.musicalKey.isNotBlank()) {
+                        Surface(
+                            color = DjSurface,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.border(1.dp, DjCardBorder, RoundedCornerShape(8.dp))
+                        ) {
+                            Text(
+                                text = "🎹 ${track.musicalKey}",
+                                fontSize = 10.sp,
+                                color = NeonEmerald,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
 
                     Surface(
@@ -257,6 +303,7 @@ fun TurntableDeck(
                     }
                 }
             }
+
         }
     }
 }

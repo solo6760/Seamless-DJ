@@ -1,13 +1,19 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.Context
+import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.audio.SeamlessDjEngine
 import com.example.audio.DjEngineState
+import com.example.data.importer.ArchiveAudioImporter
 import com.example.data.local.AppDatabase
 import com.example.data.model.*
 import com.example.data.repository.DjRepository
+import com.example.data.security.ApiKeyManager
+import com.example.data.service.GeminiBpmService
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
@@ -16,6 +22,16 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
     private val db = AppDatabase.getDatabase(application)
     val repository = DjRepository(db)
     val audioEngine = SeamlessDjEngine(application)
+    val apiKeyManager = ApiKeyManager(application)
+    val geminiBpmService = GeminiBpmService()
+    val beatDetectionEngine = com.example.audio.BeatDetectionEngine(application)
+
+
+    private val _apiKey = MutableStateFlow(apiKeyManager.getApiKey())
+    val apiKey: StateFlow<String?> = _apiKey.asStateFlow()
+
+    private val _isFirstLaunchCompleted = MutableStateFlow(apiKeyManager.isFirstLaunchCompleted())
+    val isFirstLaunchCompleted: StateFlow<Boolean> = _isFirstLaunchCompleted.asStateFlow()
 
     val playlists: StateFlow<List<Playlist>> = repository.allPlaylists.stateIn(
         scope = viewModelScope,
@@ -40,11 +56,22 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
     private val _selectedPlaylist = MutableStateFlow<Playlist?>(null)
     val selectedPlaylist: StateFlow<Playlist?> = _selectedPlaylist.asStateFlow()
 
+    private val _pendingPlaylistForDialog = MutableStateFlow<Playlist?>(null)
+    val pendingPlaylistForDialog: StateFlow<Playlist?> = _pendingPlaylistForDialog.asStateFlow()
+
+    private val _isOptimizingQueue = MutableStateFlow(false)
+    val isOptimizingQueue: StateFlow<Boolean> = _isOptimizingQueue.asStateFlow()
+
+    private val _isQueueOptimized = MutableStateFlow(false)
+    val isQueueOptimized: StateFlow<Boolean> = _isQueueOptimized.asStateFlow()
+
     private val _importUrlInput = MutableStateFlow("")
     val importUrlInput: StateFlow<String> = _importUrlInput.asStateFlow()
 
     private val _userMessage = MutableStateFlow<String?>(null)
     val userMessage: StateFlow<String?> = _userMessage.asStateFlow()
+
+    private val processedTrackBpmSet = mutableSetOf<String>()
 
     init {
         viewModelScope.launch {
@@ -54,12 +81,131 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
                 audioEngine.updateSettings(newSettings)
             }
         }
+
+        // Observe queue changes to trigger background Gemini BPM grounding lookup
+        viewModelScope.launch {
+            audioEngine.engineState.collect { state ->
+                checkAndResolveTrackBpms(state)
+            }
+        }
+    }
+
+    private fun checkAndResolveTrackBpms(state: DjEngineState) {
+        val tracksToCheck = mutableListOf<Track>()
+        state.currentTrack?.let { tracksToCheck.add(it) }
+        state.nextTrack?.let { tracksToCheck.add(it) }
+        tracksToCheck.addAll(state.queue.take(5))
+
+        for (track in tracksToCheck) {
+            if (!processedTrackBpmSet.contains(track.id)) {
+                processedTrackBpmSet.add(track.id)
+                viewModelScope.launch(Dispatchers.IO) {
+                    audioEngine.updateTrackResolvedBpm(track.id, track.bpm, BpmStatus.FETCHING)
+                    val resolved = repository.resolveTrackMetadata(track, apiKeyManager, geminiBpmService, beatDetectionEngine)
+                    audioEngine.updateTrackResolvedMetadata(
+                        trackId = track.id,
+                        bpm = resolved.bpm,
+                        status = resolved.bpmStatus,
+                        musicalKey = resolved.musicalKey,
+                        beatTimesMs = resolved.beatTimesMs
+                    )
+                }
+            }
+        }
+    }
+
+
+    fun saveGeminiApiKey(key: String, onComplete: (isValid: Boolean, errorMessage: String?) -> Unit) {
+        val trimmed = key.trim()
+        if (trimmed.isBlank()) {
+            apiKeyManager.clearApiKey()
+            _apiKey.value = null
+            onComplete(false, "API Key cannot be empty")
+            return
+        }
+
+        viewModelScope.launch(Dispatchers.IO) {
+            _userMessage.value = "Validating Gemini API Key..."
+            val isValid = geminiBpmService.validateApiKey(trimmed)
+            if (isValid) {
+                apiKeyManager.setApiKey(trimmed)
+                apiKeyManager.setFirstLaunchCompleted(true)
+                _apiKey.value = trimmed
+                _isFirstLaunchCompleted.value = true
+                _userMessage.value = "Gemini API Key saved securely! BPM Auto-Lookup active."
+                onComplete(true, null)
+            } else {
+                onComplete(false, "Invalid Gemini API Key or connection error. Please verify key.")
+            }
+        }
+    }
+
+    fun clearGeminiApiKey() {
+        apiKeyManager.clearApiKey()
+        _apiKey.value = null
+        _userMessage.value = "Gemini API Key cleared."
+    }
+
+    fun skipFirstLaunchOnboarding() {
+        apiKeyManager.setFirstLaunchCompleted(true)
+        _isFirstLaunchCompleted.value = true
     }
 
     fun selectAndPlayPlaylist(playlist: Playlist) {
-        _selectedPlaylist.value = playlist
+        openPlaylistDialog(playlist)
+    }
+
+    fun openPlaylistDialog(playlist: Playlist) {
         if (playlist.tracks.isNotEmpty()) {
-            audioEngine.setQueueAndPlay(playlist.tracks, 0)
+            _pendingPlaylistForDialog.value = playlist
+        }
+    }
+
+    fun dismissPlaylistDialog() {
+        if (!_isOptimizingQueue.value) {
+            _pendingPlaylistForDialog.value = null
+        }
+    }
+
+    fun confirmAndStartPlaylist(playlist: Playlist, startTrackIndex: Int, optimizeOrder: Boolean) {
+        _selectedPlaylist.value = playlist
+        viewModelScope.launch {
+            if (optimizeOrder && playlist.tracks.size >= 3) {
+                _isOptimizingQueue.value = true
+                val reordered = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                    com.example.util.SmartPlaylistOptimizer.optimizePlaylist(playlist.tracks, startTrackIndex)
+                }
+                audioEngine.setQueueAndPlay(reordered, 0)
+                _isQueueOptimized.value = true
+                _userMessage.value = "⚡ Playlist reordered for best transitions"
+                _isOptimizingQueue.value = false
+            } else {
+                audioEngine.setQueueAndPlay(playlist.tracks, startTrackIndex)
+                _isQueueOptimized.value = false
+                _userMessage.value = "Playing playlist in original order."
+            }
+            _pendingPlaylistForDialog.value = null
+        }
+    }
+
+    fun reshuffleCurrentQueue() {
+        val currentQueue = audioEngine.engineState.value.queue
+        if (currentQueue.isEmpty()) return
+
+        viewModelScope.launch {
+            _isOptimizingQueue.value = true
+            val currentTrack = audioEngine.engineState.value.currentTrack
+            val fullTracksToReorder = if (currentTrack != null) listOf(currentTrack) + currentQueue else currentQueue
+
+            val reordered = kotlinx.coroutines.withContext(Dispatchers.Default) {
+                com.example.util.SmartPlaylistOptimizer.optimizePlaylist(fullTracksToReorder, 0)
+            }
+
+            val remainingNewQueue = if (currentTrack != null) reordered.filter { it.id != currentTrack.id } else reordered
+            audioEngine.updateQueue(remainingNewQueue)
+            _isQueueOptimized.value = true
+            _userMessage.value = "⚡ Queue re-optimized for best transitions!"
+            _isOptimizingQueue.value = false
         }
     }
 
@@ -87,7 +233,7 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
             if (repository.isYouTubePlaylistUrl(url)) {
                 val newPlaylist = repository.parseAndImportYouTubePlaylist(url)
                 _selectedPlaylist.value = newPlaylist
-                audioEngine.setQueueAndPlay(newPlaylist.tracks, 0)
+                openPlaylistDialog(newPlaylist)
                 _userMessage.value = "Imported YouTube Playlist: ${newPlaylist.name} (${newPlaylist.tracks.size} tracks)"
                 _importUrlInput.value = ""
             } else {
@@ -113,6 +259,37 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
                 } else {
                     _userMessage.value = "Invalid URL. Please paste a YouTube (track or playlist), SoundCloud, or MP3 stream link."
                 }
+            }
+        }
+    }
+
+    fun importLocalFolder(context: Context, folderUri: Uri) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _userMessage.value = "Scanning folder and extracting MP3/FLAC/WAV audio..."
+            val playlist = ArchiveAudioImporter.importFolder(context, folderUri)
+            if (playlist.tracks.isNotEmpty()) {
+                repository.saveImportedPlaylist(playlist)
+                _selectedPlaylist.value = playlist
+                openPlaylistDialog(playlist)
+                _userMessage.value = "Imported Local Folder: ${playlist.name} (${playlist.tracks.size} tracks)"
+            } else {
+                _userMessage.value = "No supported audio files (MP3, FLAC, WAV, ZIP/TAR) found in selected folder."
+            }
+        }
+    }
+
+    fun importArchiveOrAudioFiles(context: Context, uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _userMessage.value = "Extracting tracks from archive (ZIP/TAR/RAR) / audio files..."
+            val playlist = ArchiveAudioImporter.importArchivesOrAudioFiles(context, uris)
+            if (playlist.tracks.isNotEmpty()) {
+                repository.saveImportedPlaylist(playlist)
+                _selectedPlaylist.value = playlist
+                openPlaylistDialog(playlist)
+                _userMessage.value = "Imported Playlist: ${playlist.name} (${playlist.tracks.size} tracks)"
+            } else {
+                _userMessage.value = "No supported audio files (MP3, FLAC, WAV, ZIP) extracted from file(s)."
             }
         }
     }

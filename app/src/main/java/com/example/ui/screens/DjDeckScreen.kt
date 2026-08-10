@@ -31,6 +31,7 @@ import coil.compose.AsyncImage
 import com.example.audio.ActiveDeck
 import com.example.data.model.Track
 import com.example.ui.DjViewModel
+import com.example.ui.components.ApiKeyOnboardingDialog
 import com.example.ui.components.CrossfadeMeter
 import com.example.ui.components.PartyLightsOverlay
 import com.example.ui.components.TurntableDeck
@@ -47,8 +48,21 @@ fun DjDeckScreen(
 ) {
     val engineState by viewModel.engineState.collectAsState()
     val djSettings by viewModel.settings.collectAsState()
+    val isFirstLaunchCompleted by viewModel.isFirstLaunchCompleted.collectAsState()
+    val isQueueOptimized by viewModel.isQueueOptimized.collectAsState()
     val activeTrack = engineState.currentTrack
     val nextTrack = engineState.nextTrack
+
+    if (!isFirstLaunchCompleted) {
+        ApiKeyOnboardingDialog(
+            onSaveKey = { key, onResult ->
+                viewModel.saveGeminiApiKey(key, onResult)
+            },
+            onSkip = {
+                viewModel.skipFirstLaunchOnboarding()
+            }
+        )
+    }
 
     Box(
         modifier = modifier
@@ -371,14 +385,52 @@ fun DjDeckScreen(
 
             Spacer(modifier = Modifier.height(14.dp))
 
-            // Upcoming Track Queue List
-            Text(
-                text = "UPCOMING IN MIX QUEUE",
-                fontWeight = FontWeight.Bold,
-                color = TextSecondary,
-                fontSize = 12.sp,
-                letterSpacing = 0.5.sp
-            )
+            // Upcoming Track Queue List Header
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "UPCOMING IN MIX QUEUE",
+                    fontWeight = FontWeight.Bold,
+                    color = TextSecondary,
+                    fontSize = 12.sp,
+                    letterSpacing = 0.5.sp
+                )
+
+                if (engineState.queue.isNotEmpty()) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Surface(
+                            color = if (isQueueOptimized) NeonViolet.copy(alpha = 0.2f) else DjSurfaceVariant,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .border(1.dp, if (isQueueOptimized) NeonViolet else DjCardBorder, RoundedCornerShape(12.dp))
+                                .clickable { viewModel.reshuffleCurrentQueue() }
+                                .testTag("reshuffle_queue_button")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Shuffle,
+                                    contentDescription = "Reshuffle Queue",
+                                    tint = if (isQueueOptimized) NeonCyan else TextSecondary,
+                                    modifier = Modifier.size(14.dp)
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text(
+                                    text = if (isQueueOptimized) "⚡ Reordered for best transitions" else "Re-optimize Queue",
+                                    color = if (isQueueOptimized) NeonCyan else TextSecondary,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+                    }
+                }
+            }
 
             Spacer(modifier = Modifier.height(6.dp))
 
@@ -439,7 +491,7 @@ fun DjDeckScreen(
 
                                 Spacer(modifier = Modifier.width(12.dp))
 
-                                Column(modifier = Modifier.weight(1f)) {
+                                 Column(modifier = Modifier.weight(1f)) {
                                     Text(
                                         text = track.title,
                                         fontWeight = FontWeight.Bold,
@@ -455,18 +507,50 @@ fun DjDeckScreen(
                                     )
                                 }
 
-                                Surface(
-                                    color = DjSurfaceVariant,
-                                    shape = RoundedCornerShape(12.dp)
-                                ) {
-                                    Text(
-                                        text = "${track.bpm} BPM",
-                                        color = NeonAmber,
-                                        fontSize = 10.sp,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                                    )
+                                Column(horizontalAlignment = Alignment.End) {
+                                    val score = com.example.util.CamelotWheel.getCompatibilityScore(activeTrack?.musicalKey, track.musicalKey)
+                                    val badge = com.example.util.CamelotWheel.getSmoothnessInfo(score)
+
+                                    Surface(
+                                        color = when {
+                                            score >= 0.8f -> NeonEmerald.copy(alpha = 0.2f)
+                                            score >= 0.5f -> NeonAmber.copy(alpha = 0.2f)
+                                            else -> NeonCyan.copy(alpha = 0.2f)
+                                        },
+                                        shape = RoundedCornerShape(12.dp)
+                                    ) {
+                                        Text(
+                                            text = badge.title,
+                                            color = when {
+                                                score >= 0.8f -> NeonEmerald
+                                                score >= 0.5f -> NeonAmber
+                                                else -> NeonCyan
+                                            },
+                                            fontSize = 9.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+
+                                    Spacer(modifier = Modifier.height(2.dp))
+
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(
+                                            text = "🎹 ${track.musicalKey}",
+                                            color = NeonEmerald,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(
+                                            text = "• ${track.bpm} BPM",
+                                            color = NeonAmber,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
                                 }
+
                             }
                         }
                     }
