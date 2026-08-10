@@ -25,12 +25,13 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
     val apiKeyManager = ApiKeyManager(application)
     val geminiBpmService = GeminiBpmService()
     val beatDetectionEngine = com.example.audio.BeatDetectionEngine(application)
+    val audioDspAnalyzer = com.example.audio.AudioDspAnalyzer(application)
 
 
     private val _apiKey = MutableStateFlow(apiKeyManager.getApiKey())
     val apiKey: StateFlow<String?> = _apiKey.asStateFlow()
 
-    private val _isFirstLaunchCompleted = MutableStateFlow(apiKeyManager.isFirstLaunchCompleted())
+    private val _isFirstLaunchCompleted = MutableStateFlow(true)
     val isFirstLaunchCompleted: StateFlow<Boolean> = _isFirstLaunchCompleted.asStateFlow()
 
     val playlists: StateFlow<List<Playlist>> = repository.allPlaylists.stateIn(
@@ -101,7 +102,13 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
                 processedTrackBpmSet.add(track.id)
                 viewModelScope.launch(Dispatchers.IO) {
                     audioEngine.updateTrackResolvedBpm(track.id, track.bpm, BpmStatus.FETCHING)
-                    val resolved = repository.resolveTrackMetadata(track, apiKeyManager, geminiBpmService, beatDetectionEngine)
+                    val resolved = repository.resolveTrackMetadata(
+                        track = track,
+                        audioDspAnalyzer = audioDspAnalyzer,
+                        beatDetectionEngine = beatDetectionEngine,
+                        apiKeyManager = apiKeyManager,
+                        geminiBpmService = geminiBpmService
+                    )
                     audioEngine.updateTrackResolvedMetadata(
                         trackId = track.id,
                         bpm = resolved.bpm,
@@ -217,6 +224,14 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
         audioEngine.skipToNextTrack()
     }
 
+    fun seekToPosition(seconds: Int) {
+        audioEngine.seekToSegmentPosition(seconds)
+    }
+
+    fun seekByDelta(deltaSeconds: Int) {
+        audioEngine.seekByDelta(deltaSeconds)
+    }
+
     fun updateImportUrlInput(input: String) {
         _importUrlInput.value = input
     }
@@ -299,7 +314,9 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
         startOffsetSec: Int,
         crossfadeDurationSec: Int,
         autoBpmMatch: Boolean,
-        partyLightsEnabled: Boolean
+        usePhaseVocoder: Boolean = settings.value.usePhaseVocoder,
+        partyLightsEnabled: Boolean,
+        isDarkMode: Boolean = settings.value.isDarkMode
     ) {
         viewModelScope.launch {
             val current = settings.value
@@ -308,10 +325,19 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
                 startOffsetSec = startOffsetSec,
                 crossfadeDurationSec = crossfadeDurationSec,
                 autoBpmMatch = autoBpmMatch,
-                partyLightsEnabled = partyLightsEnabled
+                usePhaseVocoder = usePhaseVocoder,
+                partyLightsEnabled = partyLightsEnabled,
+                isDarkMode = isDarkMode
             )
             repository.saveSettings(updated)
-            _userMessage.value = "DJ settings updated! Segments: ${segmentDurationSec}s | Drop: ${startOffsetSec}s | Fade: ${crossfadeDurationSec}s"
+            _userMessage.value = "DJ settings updated! Segments: ${segmentDurationSec}s | Drop: ${startOffsetSec}s | Fade: ${crossfadeDurationSec}s | Phase Vocoder: ${if (usePhaseVocoder) "On" else "Off"}"
+        }
+    }
+
+    fun toggleDarkMode(isDark: Boolean) {
+        viewModelScope.launch {
+            val current = settings.value
+            repository.saveSettings(current.copy(isDarkMode = isDark))
         }
     }
 
@@ -337,6 +363,16 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
     fun upvoteGuestRequest(requestId: String) {
         viewModelScope.launch {
             repository.upvoteRequest(requestId)
+        }
+    }
+
+    fun getPhaseVocoderMetrics(): com.example.audio.phase_vocoder.PhaseVocoderMetrics {
+        return audioEngine.getPhaseVocoderMetrics()
+    }
+
+    fun runABComparisonTest() {
+        audioEngine.runABComparisonTest { msg ->
+            _userMessage.value = msg
         }
     }
 

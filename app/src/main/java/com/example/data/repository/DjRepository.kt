@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import com.example.audio.AudioDspAnalyzer
 import com.example.audio.BeatDetectionEngine
 import com.example.data.local.AppDatabase
 import com.example.data.local.BeatCacheEntity
@@ -11,8 +12,6 @@ import com.example.data.local.SongMetadataEntity
 import com.example.data.local.TrackEntity
 
 import com.example.data.model.*
-import com.example.data.security.ApiKeyManager
-import com.example.data.service.GeminiBpmService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -60,15 +59,20 @@ class DjRepository(private val db: AppDatabase) {
 
     suspend fun resolveTrackMetadata(
         track: Track,
-        apiKeyManager: ApiKeyManager,
-        geminiBpmService: GeminiBpmService,
-        beatDetectionEngine: BeatDetectionEngine
+        audioDspAnalyzer: AudioDspAnalyzer,
+        beatDetectionEngine: BeatDetectionEngine,
+        apiKeyManager: com.example.data.security.ApiKeyManager,
+        geminiBpmService: com.example.data.service.GeminiBpmService
     ): Track = withContext(Dispatchers.IO) {
         val trackKey = "${track.artist.lowercase().trim()}_${track.title.lowercase().trim()}"
 
         // 1. Check song_metadata_cache table
         val cachedMeta = db.songMetadataDao().getMetadata(trackKey)
-        val trackWithMeta = if (cachedMeta != null) {
+        val needsGeminiValidation = cachedMeta != null &&
+                !cachedMeta.validatedByGemini &&
+                (cachedMeta.bpmConfidence < 60 || cachedMeta.keyConfidence < 50 || cachedMeta.musicalKey.isBlank() || cachedMeta.musicalKey == "Unknown")
+
+        val trackWithMeta = if (cachedMeta != null && !needsGeminiValidation) {
             val status = try { BpmStatus.valueOf(cachedMeta.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
             val resolvedBpm = if (cachedMeta.bpm > 0) cachedMeta.bpm else track.bpm
             track.copy(
@@ -77,49 +81,71 @@ class DjRepository(private val db: AppDatabase) {
                 musicalKey = if (cachedMeta.musicalKey.isNotBlank()) cachedMeta.musicalKey else track.musicalKey
             )
         } else {
-            // Check legacy song_bpm_cache
-            val cachedBpm = db.songBpmDao().getBpm(trackKey)
-            if (cachedBpm != null) {
-                val status = try { BpmStatus.valueOf(cachedBpm.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
-                track.copy(
-                    bpm = if (cachedBpm.bpm > 0) cachedBpm.bpm else track.bpm,
-                    bpmStatus = if (cachedBpm.bpm > 0) BpmStatus.RESOLVED else status
-                )
-            } else {
-                // Fetch via Gemini
-                val apiKey = apiKeyManager.getApiKey() ?: ""
-                if (apiKey.isBlank()) {
-                    val metaEntity = SongMetadataEntity(
-                        trackKey = trackKey,
-                        bpm = -1,
-                        musicalKey = track.musicalKey,
-                        camelotKey = "",
-                        status = BpmStatus.UNKNOWN.name
-                    )
-                    db.songMetadataDao().insertMetadata(metaEntity)
-                    track.copy(bpmStatus = BpmStatus.UNKNOWN)
-                } else {
-                    val metaResult = geminiBpmService.lookupMetadata(track.title, track.artist, apiKey)
-                    val resolvedBpm = metaResult.bpm ?: -1
-                    val resolvedKey = if (metaResult.musicalKey.isNotBlank()) metaResult.musicalKey else "Unknown"
-                    val status = if (resolvedBpm in 40..220) BpmStatus.RESOLVED else BpmStatus.UNKNOWN
+            // Run DSP analysis if not already cached
+            val dspResult = if (cachedMeta == null) {
+                audioDspAnalyzer.analyzeTrack(track)
+            } else null
 
-                    val metaEntity = SongMetadataEntity(
-                        trackKey = trackKey,
-                        bpm = resolvedBpm,
-                        musicalKey = resolvedKey,
-                        camelotKey = metaResult.camelotKey,
-                        status = status.name
-                    )
-                    db.songMetadataDao().insertMetadata(metaEntity)
+            var bpm = dspResult?.bpm ?: cachedMeta!!.bpm
+            var bpmConf = dspResult?.bpmConfidence ?: cachedMeta!!.bpmConfidence
+            var key = dspResult?.musicalKey ?: cachedMeta!!.musicalKey
+            var camelot = dspResult?.camelotKey ?: cachedMeta!!.camelotKey
+            var keyConf = dspResult?.keyConfidence ?: cachedMeta!!.keyConfidence
+            var statusStr = dspResult?.status?.name ?: cachedMeta!!.status
+            var overallConf = dspResult?.confidence ?: cachedMeta!!.analysisConfidence
+            var isValidatedByGemini = cachedMeta?.validatedByGemini ?: false
 
-                    track.copy(
-                        bpm = if (resolvedBpm in 40..220) resolvedBpm else track.bpm,
-                        bpmStatus = status,
-                        musicalKey = if (resolvedKey != "Unknown") resolvedKey else track.musicalKey
+            val isLowConfidence = bpmConf < 60 || keyConf < 50 || key.isBlank() || key == "Unknown"
+            val apiKey = apiKeyManager.getApiKey() ?: ""
+
+            if (isLowConfidence && apiKey.isNotBlank()) {
+                try {
+                    val geminiResult = geminiBpmService.validateLowConfidenceMetadata(
+                        title = track.title,
+                        artist = track.artist,
+                        dspBpm = bpm,
+                        dspKey = key,
+                        bpmConfidence = bpmConf,
+                        keyConfidence = keyConf,
+                        apiKey = apiKey
                     )
+
+                    if (geminiResult.bpm != null && geminiResult.bpm in 40..220) {
+                        bpm = geminiResult.bpm
+                        bpmConf = 95
+                        statusStr = BpmStatus.RESOLVED.name
+                    }
+                    if (geminiResult.musicalKey.isNotBlank() && geminiResult.musicalKey != "Unknown") {
+                        key = geminiResult.musicalKey
+                        camelot = geminiResult.camelotKey
+                        keyConf = 95
+                    }
+                    isValidatedByGemini = true
+                    overallConf = "high"
+                } catch (e: Exception) {
+                    android.util.Log.w("DjRepository", "Gemini validation skipped for track '${track.title}': ${e.message}")
                 }
             }
+
+            val metaEntity = SongMetadataEntity(
+                trackKey = trackKey,
+                bpm = bpm,
+                bpmConfidence = bpmConf,
+                musicalKey = key,
+                camelotKey = camelot,
+                keyConfidence = keyConf,
+                validatedByGemini = isValidatedByGemini,
+                status = statusStr,
+                analysisConfidence = overallConf
+            )
+            db.songMetadataDao().insertMetadata(metaEntity)
+
+            val bpmStatusEnum = try { BpmStatus.valueOf(statusStr) } catch (e: Exception) { BpmStatus.UNKNOWN }
+            track.copy(
+                bpm = if (bpm in 40..220) bpm else track.bpm,
+                bpmStatus = if (bpm in 40..220) BpmStatus.RESOLVED else bpmStatusEnum,
+                musicalKey = if (key != "Unknown") key else track.musicalKey
+            )
         }
 
         // 2. Resolve beat times from beat_cache or BeatDetectionEngine
@@ -133,7 +159,7 @@ class DjRepository(private val db: AppDatabase) {
         } else {
             val detectedTimes = beatDetectionEngine.analyzeBeatTimes(trackWithMeta)
             val csvStr = detectedTimes.joinToString(",")
-            val beatEntity = com.example.data.local.BeatCacheEntity(
+            val beatEntity = BeatCacheEntity(
                 trackKey = trackKey,
                 beatTimesCsv = csvStr,
                 bpm = trackWithMeta.bpm
@@ -149,40 +175,11 @@ class DjRepository(private val db: AppDatabase) {
 
     suspend fun resolveTrackBpm(
         track: Track,
-        apiKeyManager: ApiKeyManager,
-        geminiBpmService: GeminiBpmService
-    ): Track = withContext(Dispatchers.IO) {
-        val trackKey = "${track.artist.lowercase().trim()}_${track.title.lowercase().trim()}"
-
-        // 1. Check local Room database table
-        val cached = db.songBpmDao().getBpm(trackKey)
-        if (cached != null) {
-            val status = try { BpmStatus.valueOf(cached.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
-            return@withContext track.copy(
-                bpm = if (cached.bpm > 0) cached.bpm else track.bpm,
-                bpmStatus = if (cached.bpm > 0) BpmStatus.RESOLVED else status
-            )
-        }
-
-        // 2. Not cached: fetch via Gemini API with Search Grounding
-        val apiKey = apiKeyManager.getApiKey() ?: ""
-        if (apiKey.isBlank()) {
-            val entity = SongBpmEntity(trackKey = trackKey, bpm = -1, status = BpmStatus.UNKNOWN.name)
-            db.songBpmDao().insertBpm(entity)
-            return@withContext track.copy(bpmStatus = BpmStatus.UNKNOWN)
-        }
-
-        val resolvedBpm = geminiBpmService.lookupBpm(track.title, track.artist, apiKey)
-        if (resolvedBpm != null && resolvedBpm in 40..220) {
-            val entity = SongBpmEntity(trackKey = trackKey, bpm = resolvedBpm, status = BpmStatus.RESOLVED.name)
-            db.songBpmDao().insertBpm(entity)
-            return@withContext track.copy(bpm = resolvedBpm, bpmStatus = BpmStatus.RESOLVED)
-        } else {
-            val entity = SongBpmEntity(trackKey = trackKey, bpm = -1, status = BpmStatus.UNKNOWN.name)
-            db.songBpmDao().insertBpm(entity)
-            return@withContext track.copy(bpmStatus = BpmStatus.UNKNOWN)
-        }
-    }
+        audioDspAnalyzer: AudioDspAnalyzer,
+        beatDetectionEngine: BeatDetectionEngine,
+        apiKeyManager: com.example.data.security.ApiKeyManager,
+        geminiBpmService: com.example.data.service.GeminiBpmService
+    ): Track = resolveTrackMetadata(track, audioDspAnalyzer, beatDetectionEngine, apiKeyManager, geminiBpmService)
 
 
     suspend fun addGuestRequest(track: Track, requestedBy: String) = withContext(Dispatchers.IO) {
@@ -608,8 +605,10 @@ private fun DjSettings.toEntity(): DjSettingsEntity = DjSettingsEntity(
     startOffsetSec = startOffsetSec,
     crossfadeDurationSec = crossfadeDurationSec,
     autoBpmMatch = autoBpmMatch,
+    usePhaseVocoder = usePhaseVocoder,
     partyLightsEnabled = partyLightsEnabled,
-    partyRoomCode = partyRoomCode
+    partyRoomCode = partyRoomCode,
+    isDarkMode = isDarkMode
 )
 
 private fun DjSettingsEntity.toModel(): DjSettings = DjSettings(
@@ -617,6 +616,8 @@ private fun DjSettingsEntity.toModel(): DjSettings = DjSettings(
     startOffsetSec = startOffsetSec,
     crossfadeDurationSec = crossfadeDurationSec,
     autoBpmMatch = autoBpmMatch,
+    usePhaseVocoder = usePhaseVocoder,
     partyLightsEnabled = partyLightsEnabled,
-    partyRoomCode = partyRoomCode
+    partyRoomCode = partyRoomCode,
+    isDarkMode = isDarkMode
 )

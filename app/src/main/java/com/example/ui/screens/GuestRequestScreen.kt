@@ -44,37 +44,41 @@ fun GuestRequestScreen(
                 title = {
                     Text(
                         text = "Guest Song Requests (${settings.partyRoomCode})",
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        fontSize = 16.sp
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 },
                 navigationIcon = {
                     IconButton(
                         onClick = onBackToDeck,
-                        modifier = Modifier.testTag("back_to_deck_from_requests")
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("back_to_deck_from_requests")
                     ) {
-                        Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = TextPrimary)
+                        Icon(
+                            imageVector = Icons.Default.ArrowBack,
+                            contentDescription = "Back",
+                            tint = MaterialTheme.colorScheme.onSurface
+                        )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DjBackground)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },
-        containerColor = DjBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         modifier = modifier
     ) { innerPadding ->
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             item {
-                // Room Code Banner
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DjSurfaceVariant),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(16.dp),
                     border = CardDefaults.outlinedCardBorder()
                 ) {
@@ -83,7 +87,7 @@ fun GuestRequestScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Surface(
-                            color = NeonCyan.copy(alpha = 0.2f),
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
                             shape = CircleShape,
                             modifier = Modifier.size(48.dp)
                         ) {
@@ -91,7 +95,8 @@ fun GuestRequestScreen(
                                 Icon(
                                     imageVector = Icons.Default.QrCodeScanner,
                                     contentDescription = "Room QR",
-                                    tint = NeonCyan
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
                         }
@@ -101,14 +106,14 @@ fun GuestRequestScreen(
                         Column {
                             Text(
                                 text = "PARTY ROOM CODE: ${settings.partyRoomCode}",
-                                fontWeight = FontWeight.Black,
-                                color = TextPrimary,
-                                fontSize = 15.sp
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold
                             )
                             Text(
                                 text = "Guests can request songs from YouTube & SoundCloud and vote them up!",
-                                color = TextSecondary,
-                                fontSize = 11.sp
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -116,19 +121,18 @@ fun GuestRequestScreen(
             }
 
             item {
-                // Request Form
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(containerColor = DjSurface),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                     shape = RoundedCornerShape(16.dp),
                     border = CardDefaults.outlinedCardBorder()
                 ) {
                     Column(modifier = Modifier.padding(16.dp)) {
                         Text(
                             text = "REQUEST A SONG FOR THE DJ MIX",
-                            fontWeight = FontWeight.Bold,
-                            color = NeonMagenta,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
                         )
 
                         Spacer(modifier = Modifier.height(10.dp))
@@ -136,19 +140,12 @@ fun GuestRequestScreen(
                         OutlinedTextField(
                             value = songTitle,
                             onValueChange = { songTitle = it },
-                            label = { Text("Song Title *", color = TextSecondary) },
+                            label = { Text("Song Title *") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("request_title_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = DjSurfaceVariant,
-                                unfocusedContainerColor = DjSurfaceVariant,
-                                focusedBorderColor = NeonMagenta,
-                                unfocusedBorderColor = DjCardBorder,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            )
+                                .testTag("request_title_input")
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -156,19 +153,12 @@ fun GuestRequestScreen(
                         OutlinedTextField(
                             value = artistName,
                             onValueChange = { artistName = it },
-                            label = { Text("Artist Name", color = TextSecondary) },
+                            label = { Text("Artist Name") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("request_artist_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = DjSurfaceVariant,
-                                unfocusedContainerColor = DjSurfaceVariant,
-                                focusedBorderColor = NeonMagenta,
-                                unfocusedBorderColor = DjCardBorder,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            )
+                                .testTag("request_artist_input")
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -176,19 +166,12 @@ fun GuestRequestScreen(
                         OutlinedTextField(
                             value = sourceUrl,
                             onValueChange = { sourceUrl = it },
-                            label = { Text("YouTube / SoundCloud Link (Optional)", color = TextSecondary) },
+                            label = { Text("YouTube / SoundCloud Link (Optional)") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("request_url_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = DjSurfaceVariant,
-                                unfocusedContainerColor = DjSurfaceVariant,
-                                focusedBorderColor = NeonMagenta,
-                                unfocusedBorderColor = DjCardBorder,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            )
+                                .testTag("request_url_input")
                         )
 
                         Spacer(modifier = Modifier.height(8.dp))
@@ -196,22 +179,15 @@ fun GuestRequestScreen(
                         OutlinedTextField(
                             value = guestName,
                             onValueChange = { guestName = it },
-                            label = { Text("Your Name / Alias", color = TextSecondary) },
+                            label = { Text("Your Name / Alias") },
                             singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("request_guest_name_input"),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = DjSurfaceVariant,
-                                unfocusedContainerColor = DjSurfaceVariant,
-                                focusedBorderColor = NeonMagenta,
-                                unfocusedBorderColor = DjCardBorder,
-                                focusedTextColor = TextPrimary,
-                                unfocusedTextColor = TextPrimary
-                            )
+                                .testTag("request_guest_name_input")
                         )
 
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.height(14.dp))
 
                         Button(
                             onClick = {
@@ -228,9 +204,9 @@ fun GuestRequestScreen(
                                 .height(48.dp)
                                 .testTag("submit_request_button"),
                             shape = RoundedCornerShape(12.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = NeonMagenta)
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Icon(imageVector = Icons.Default.Add, contentDescription = "Submit Request")
+                            Icon(imageVector = Icons.Default.Add, contentDescription = "Submit Request", tint = Color.White)
                             Spacer(modifier = Modifier.width(6.dp))
                             Text("SUBMIT SONG REQUEST", fontWeight = FontWeight.Bold, color = Color.White)
                         }
@@ -241,9 +217,9 @@ fun GuestRequestScreen(
             item {
                 Text(
                     text = "GUEST REQUEST QUEUE (MOST UPVOTED FIRST)",
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary,
-                    fontSize = 12.sp
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
                 )
             }
 
@@ -251,12 +227,12 @@ fun GuestRequestScreen(
                 item {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = DjSurface)
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
                     ) {
                         Text(
                             text = "No guest requests yet. Be the first to request a song above!",
-                            color = TextSecondary,
-                            fontSize = 12.sp,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(16.dp)
                         )
                     }
@@ -267,7 +243,7 @@ fun GuestRequestScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("request_item_${req.id}"),
-                        colors = CardDefaults.cardColors(containerColor = DjSurface),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(12.dp),
                         border = CardDefaults.outlinedCardBorder()
                     ) {
@@ -278,37 +254,35 @@ fun GuestRequestScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = req.track.title,
-                                    fontWeight = FontWeight.Bold,
-                                    color = TextPrimary,
-                                    fontSize = 14.sp,
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
                                     text = "${req.track.artist} • Requested by ${req.requestedBy}",
-                                    color = TextSecondary,
-                                    fontSize = 11.sp
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
 
-                            // Upvote Button
                             Button(
                                 onClick = { viewModel.upvoteGuestRequest(req.id) },
                                 shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = DjSurfaceVariant),
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
                                 modifier = Modifier.testTag("upvote_button_${req.id}")
                             ) {
                                 Icon(
                                     imageVector = Icons.Default.ThumbUp,
                                     contentDescription = "Upvote",
-                                    tint = NeonAmber,
+                                    tint = MaterialTheme.colorScheme.primary,
                                     modifier = Modifier.size(16.dp)
                                 )
                                 Spacer(modifier = Modifier.width(6.dp))
                                 Text(
                                     text = "+${req.upvotes}",
                                     fontWeight = FontWeight.Bold,
-                                    color = NeonAmber,
+                                    color = MaterialTheme.colorScheme.primary,
                                     fontSize = 12.sp
                                 )
                             }

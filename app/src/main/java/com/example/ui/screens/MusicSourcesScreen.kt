@@ -27,7 +27,6 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.data.model.Playlist
 import com.example.data.model.PlaylistSource
-import com.example.data.model.TrackSource
 import com.example.ui.DjViewModel
 import com.example.ui.theme.*
 
@@ -43,7 +42,7 @@ fun MusicSourcesScreen(
     val importInput by viewModel.importUrlInput.collectAsState()
     val userMessage by viewModel.userMessage.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(0) } // 0: Curated Playlists, 1: Import Link, 2: Import Folder / Archive
+    var selectedTab by remember { mutableStateOf(0) } // 0: Playlists, 1: Web Link, 2: Folder / Archive
 
     // Folder Launcher
     val folderLauncher = rememberLauncherForActivityResult(
@@ -70,73 +69,78 @@ fun MusicSourcesScreen(
             TopAppBar(
                 title = {
                     Text(
-                        text = "Music Sources (YouTube / SoundCloud)",
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        fontSize = 16.sp
+                        text = "Music Sources",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 },
                 navigationIcon = {
                     IconButton(
                         onClick = onBackToDeck,
-                        modifier = Modifier.testTag("back_to_deck_button")
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("back_to_deck_button")
                     ) {
                         Icon(
                             imageVector = Icons.Default.ArrowBack,
                             contentDescription = "Back",
-                            tint = TextPrimary
+                            tint = MaterialTheme.colorScheme.onSurface
                         )
                     }
                 },
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = DjBackground)
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.background)
             )
         },
-        containerColor = DjBackground,
+        containerColor = MaterialTheme.colorScheme.background,
         modifier = modifier
     ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
-                .padding(horizontal = 16.dp)
+                .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // User Feedback Toast Snackbar
+            // Toast / User Feedback
             userMessage?.let { msg ->
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .padding(bottom = 8.dp),
-                    colors = CardDefaults.cardColors(containerColor = NeonMagenta.copy(alpha = 0.2f)),
-                    shape = RoundedCornerShape(10.dp),
+                        .padding(bottom = 12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+                    shape = RoundedCornerShape(12.dp),
                     border = CardDefaults.outlinedCardBorder()
                 ) {
                     Row(
-                        modifier = Modifier.padding(10.dp),
+                        modifier = Modifier.padding(12.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text(text = msg, color = TextPrimary, fontSize = 12.sp, modifier = Modifier.weight(1f))
                         Text(
-                            text = "DISMISS",
-                            color = NeonMagenta,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp,
-                            modifier = Modifier
-                                .clickable { viewModel.clearUserMessage() }
-                                .padding(4.dp)
+                            text = msg,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f)
                         )
+                        IconButton(onClick = { viewModel.clearUserMessage() }) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = "Dismiss",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            // Tab Row
+            // Tab Selector
             TabRow(
                 selectedTabIndex = selectedTab,
-                containerColor = DjSurface,
-                contentColor = NeonViolet,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.primary,
                 modifier = Modifier
-                    .clip(RoundedCornerShape(12.dp))
-                    .border(1.dp, DjCardBorder, RoundedCornerShape(12.dp))
+                    .clip(RoundedCornerShape(16.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
             ) {
                 Tab(
                     selected = selectedTab == 0,
@@ -144,9 +148,9 @@ fun MusicSourcesScreen(
                     text = {
                         Text(
                             text = "Playlists",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = if (selectedTab == 0) NeonViolet else TextSecondary
+                            color = if (selectedTab == 0) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 )
@@ -156,9 +160,9 @@ fun MusicSourcesScreen(
                     text = {
                         Text(
                             text = "Web Link",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = if (selectedTab == 1) NeonCyan else TextSecondary
+                            color = if (selectedTab == 1) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 )
@@ -167,10 +171,10 @@ fun MusicSourcesScreen(
                     onClick = { selectedTab = 2 },
                     text = {
                         Text(
-                            text = "Folder / Archive",
+                            text = "Folder / Zip",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 12.sp,
-                            color = if (selectedTab == 2) NeonAmber else TextSecondary
+                            color = if (selectedTab == 2) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 )
@@ -179,7 +183,6 @@ fun MusicSourcesScreen(
             Spacer(modifier = Modifier.height(16.dp))
 
             if (selectedTab == 0) {
-                // List of YouTube & SoundCloud Playlists
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -195,13 +198,10 @@ fun MusicSourcesScreen(
                     }
                 }
             } else if (selectedTab == 1) {
-                // Link Import Tab
-                Column(
-                    modifier = Modifier.fillMaxSize()
-                ) {
+                Column(modifier = Modifier.fillMaxSize()) {
                     Card(
                         modifier = Modifier.fillMaxWidth(),
-                        colors = CardDefaults.cardColors(containerColor = DjSurface),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         shape = RoundedCornerShape(16.dp),
                         border = CardDefaults.outlinedCardBorder()
                     ) {
@@ -209,23 +209,22 @@ fun MusicSourcesScreen(
                             Row(verticalAlignment = Alignment.CenterVertically) {
                                 Icon(
                                     imageVector = Icons.Default.PlaylistPlay,
-                                    contentDescription = "YouTube Playlist",
+                                    contentDescription = "YouTube",
                                     tint = YouTubeRed,
                                     modifier = Modifier.size(24.dp)
                                 )
                                 Spacer(modifier = Modifier.width(8.dp))
                                 Text(
-                                    text = "IMPORT WHOLE YOUTUBE PLAYLIST / LINK",
-                                    fontWeight = FontWeight.Bold,
-                                    color = NeonCyan,
-                                    fontSize = 13.sp
+                                    text = "Import YouTube / SoundCloud Link",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
                             Spacer(modifier = Modifier.height(6.dp))
                             Text(
-                                text = "Paste a YouTube playlist link (e.g. youtube.com/playlist?list=PL...) or single track URL. All tracks will be queued for continuous Spotify/Apple style Automixing!",
-                                color = TextSecondary,
-                                fontSize = 12.sp
+                                text = "Paste a YouTube playlist URL or single track link to import into the Automix DJ queue.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
 
                             Spacer(modifier = Modifier.height(12.dp))
@@ -236,49 +235,10 @@ fun MusicSourcesScreen(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .testTag("import_url_input"),
-                                placeholder = { Text("https://www.youtube.com/playlist?list=PL...", color = TextMuted) },
+                                placeholder = { Text("https://www.youtube.com/playlist?list=...") },
                                 singleLine = true,
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = DjSurfaceVariant,
-                                    unfocusedContainerColor = DjSurfaceVariant,
-                                    focusedBorderColor = NeonCyan,
-                                    unfocusedBorderColor = DjCardBorder,
-                                    focusedTextColor = TextPrimary,
-                                    unfocusedTextColor = TextPrimary
-                                )
+                                shape = RoundedCornerShape(12.dp)
                             )
-
-                            Spacer(modifier = Modifier.height(12.dp))
-
-                            // Quick Preset Buttons for Testing YouTube Playlist Import
-                            Text(
-                                text = "QUICK TEST SAMPLE PLAYLIST LINKS:",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = TextSecondary
-                            )
-                            Spacer(modifier = Modifier.height(6.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                FilterChip(
-                                    selected = false,
-                                    onClick = {
-                                        viewModel.updateImportUrlInput("https://www.youtube.com/playlist?list=PL3N4v983u1y7Y5d")
-                                    },
-                                    label = { Text("EDM Festival Playlist", fontSize = 11.sp, color = NeonCyan) },
-                                    colors = FilterChipDefaults.filterChipColors(containerColor = DjSurfaceVariant)
-                                )
-                                FilterChip(
-                                    selected = false,
-                                    onClick = {
-                                        viewModel.updateImportUrlInput("https://www.youtube.com/playlist?list=PL8x1a39y0mK4281")
-                                    },
-                                    label = { Text("House & Synth Mix", fontSize = 11.sp, color = NeonMagenta) },
-                                    colors = FilterChipDefaults.filterChipColors(containerColor = DjSurfaceVariant)
-                                )
-                            }
 
                             Spacer(modifier = Modifier.height(12.dp))
 
@@ -292,17 +252,16 @@ fun MusicSourcesScreen(
                                     .height(48.dp)
                                     .testTag("import_and_mix_button"),
                                 shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.buttonColors(containerColor = NeonCyan)
+                                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                             ) {
-                                Icon(imageVector = Icons.Default.CloudDownload, contentDescription = "Import Playlist")
+                                Icon(imageVector = Icons.Default.CloudDownload, contentDescription = "Import", tint = Color.White)
                                 Spacer(modifier = Modifier.width(8.dp))
-                                Text("IMPORT PLAYLIST & START AUTOMIX", fontWeight = FontWeight.Bold, color = Color.Black)
+                                Text("Import Playlist & Start Automix", fontWeight = FontWeight.Bold, color = Color.White)
                             }
                         }
                     }
                 }
             } else {
-                // Folder & Archive Import Tab (Tab 2)
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -310,7 +269,7 @@ fun MusicSourcesScreen(
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = DjSurface),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             shape = RoundedCornerShape(16.dp),
                             border = CardDefaults.outlinedCardBorder()
                         ) {
@@ -318,42 +277,38 @@ fun MusicSourcesScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         imageVector = Icons.Default.FolderOpen,
-                                        contentDescription = "Import Folder",
-                                        tint = NeonAmber,
+                                        contentDescription = "Folder",
+                                        tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(26.dp)
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
-                                        text = "IMPORT ENTIRE MUSIC FOLDER",
-                                        fontWeight = FontWeight.Bold,
-                                        color = NeonAmber,
-                                        fontSize = 14.sp
+                                        text = "Import Music Folder",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Select any folder on your device containing MP3, FLAC, WAV, M4A, or AAC audio tracks. All music in the folder and its subdirectories will be extracted into a seamless custom DJ playlist!",
-                                    color = TextSecondary,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp
+                                    text = "Select any local folder containing MP3, FLAC, WAV, M4A audio files.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
 
                                 Spacer(modifier = Modifier.height(14.dp))
 
                                 Button(
-                                    onClick = {
-                                        folderLauncher.launch(null)
-                                    },
+                                    onClick = { folderLauncher.launch(null) },
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .height(48.dp)
                                         .testTag("import_folder_button"),
                                     shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = NeonAmber)
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                 ) {
-                                    Icon(imageVector = Icons.Default.Folder, contentDescription = "Browse Folder", tint = Color.Black)
+                                    Icon(imageVector = Icons.Default.Folder, contentDescription = "Folder", tint = Color.White)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("SELECT & IMPORT FOLDER", fontWeight = FontWeight.Bold, color = Color.Black)
+                                    Text("Select & Import Folder", fontWeight = FontWeight.Bold, color = Color.White)
                                 }
                             }
                         }
@@ -362,7 +317,7 @@ fun MusicSourcesScreen(
                     item {
                         Card(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = CardDefaults.cardColors(containerColor = DjSurface),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                             shape = RoundedCornerShape(16.dp),
                             border = CardDefaults.outlinedCardBorder()
                         ) {
@@ -370,24 +325,22 @@ fun MusicSourcesScreen(
                                 Row(verticalAlignment = Alignment.CenterVertically) {
                                     Icon(
                                         imageVector = Icons.Default.Archive,
-                                        contentDescription = "Import Archive",
-                                        tint = NeonMagenta,
+                                        contentDescription = "Archive",
+                                        tint = MaterialTheme.colorScheme.primary,
                                         modifier = Modifier.size(26.dp)
                                     )
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text(
-                                        text = "IMPORT ZIP / RAR / TAR.GZ / AUDIO FILES",
-                                        fontWeight = FontWeight.Bold,
-                                        color = NeonMagenta,
-                                        fontSize = 14.sp
+                                        text = "Import Zip / Archive Package",
+                                        style = MaterialTheme.typography.titleMedium,
+                                        color = MaterialTheme.colorScheme.onSurface
                                     )
                                 }
                                 Spacer(modifier = Modifier.height(8.dp))
                                 Text(
-                                    text = "Pick .ZIP, .TAR.GZ, .TAR, or .RAR archive packages or select multiple MP3, FLAC, and WAV audio files. The DJ engine will unpack the archive, extract metadata & album art, and generate a custom party mix queue!",
-                                    color = TextSecondary,
-                                    fontSize = 12.sp,
-                                    lineHeight = 16.sp
+                                    text = "Pick .ZIP, .TAR.GZ, or audio files to auto-extract and build a DJ queue.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
 
                                 Spacer(modifier = Modifier.height(14.dp))
@@ -401,49 +354,11 @@ fun MusicSourcesScreen(
                                         .height(48.dp)
                                         .testTag("import_archive_files_button"),
                                     shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = NeonMagenta)
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                                 ) {
-                                    Icon(imageVector = Icons.Default.Unarchive, contentDescription = "Select Archive", tint = Color.White)
+                                    Icon(imageVector = Icons.Default.Unarchive, contentDescription = "Archive", tint = Color.White)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("SELECT ARCHIVE OR AUDIO FILES", fontWeight = FontWeight.Bold, color = Color.White)
-                                }
-                            }
-                        }
-                    }
-
-                    item {
-                        Surface(
-                            color = DjSurfaceVariant,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Column(modifier = Modifier.padding(14.dp)) {
-                                Text(
-                                    text = "SUPPORTED LOCAL AUDIO & ARCHIVE FORMATS",
-                                    fontWeight = FontWeight.Bold,
-                                    color = TextPrimary,
-                                    fontSize = 11.sp
-                                )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                                ) {
-                                    listOf("MP3", "FLAC", "WAV", "M4A", "ZIP", "TAR.GZ", "RAR").forEach { fmt ->
-                                        Surface(
-                                            color = DjSurface,
-                                            shape = RoundedCornerShape(6.dp),
-                                            border = CardDefaults.outlinedCardBorder()
-                                        ) {
-                                            Text(
-                                                text = fmt,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                color = NeonCyan,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                            )
-                                        }
-                                    }
+                                    Text("Select Archive / Audio Files", fontWeight = FontWeight.Bold, color = Color.White)
                                 }
                             }
                         }
@@ -463,7 +378,7 @@ fun PlaylistCard(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("playlist_card_${playlist.id}"),
-        colors = CardDefaults.cardColors(containerColor = DjSurface),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         shape = RoundedCornerShape(16.dp),
         border = CardDefaults.outlinedCardBorder()
     ) {
@@ -482,42 +397,30 @@ fun PlaylistCard(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = playlist.name,
-                        fontWeight = FontWeight.Bold,
-                        color = TextPrimary,
-                        fontSize = 15.sp,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
                     )
                     Text(
-                        text = "${playlist.genre} • ${playlist.avgBpm} BPM Avg",
-                        color = NeonAmber,
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Medium
+                        text = "${playlist.genre} • Avg ${playlist.avgBpm} BPM",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.primary
                     )
                     Text(
                         text = "${playlist.tracks.size} Tracks",
-                        color = TextSecondary,
-                        fontSize = 11.sp
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
 
                 Surface(
-                    color = when (playlist.source) {
-                        PlaylistSource.YOUTUBE -> YouTubeRed.copy(alpha = 0.2f)
-                        PlaylistSource.SOUNDCLOUD -> SoundCloudOrange.copy(alpha = 0.2f)
-                        PlaylistSource.CUSTOM -> NeonAmber.copy(alpha = 0.2f)
-                        else -> NeonViolet.copy(alpha = 0.2f)
-                    },
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(12.dp)
                 ) {
                     Text(
-                        text = if (playlist.source == PlaylistSource.CUSTOM) "LOCAL / CUSTOM" else playlist.source.name,
-                        color = when (playlist.source) {
-                            PlaylistSource.YOUTUBE -> YouTubeRed
-                            PlaylistSource.SOUNDCLOUD -> SoundCloudOrange
-                            PlaylistSource.CUSTOM -> NeonAmber
-                            else -> NeonViolet
-                        },
+                        text = if (playlist.source == PlaylistSource.CUSTOM) "LOCAL" else playlist.source.name,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold,
                         fontSize = 10.sp,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -529,8 +432,8 @@ fun PlaylistCard(
 
             Text(
                 text = playlist.description,
-                color = TextSecondary,
-                fontSize = 12.sp,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2,
                 overflow = TextOverflow.Ellipsis
             )
@@ -541,13 +444,13 @@ fun PlaylistCard(
                 onClick = onPlayClick,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(42.dp),
-                shape = RoundedCornerShape(10.dp),
-                colors = ButtonDefaults.buttonColors(containerColor = NeonViolet)
+                    .height(44.dp),
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
             ) {
-                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start DJ Mix")
+                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = "Start DJ Mix", tint = Color.White)
                 Spacer(modifier = Modifier.width(6.dp))
-                Text(text = "START SEAMLESS DJ MIX", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text(text = "Start Automix DJ", fontWeight = FontWeight.Bold, color = Color.White)
             }
         }
     }

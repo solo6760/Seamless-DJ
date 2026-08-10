@@ -31,6 +31,74 @@ class GeminiBpmService(
         "gemini-1.5-flash"
     )
 
+    suspend fun validateLowConfidenceMetadata(
+        title: String,
+        artist: String,
+        dspBpm: Int,
+        dspKey: String,
+        bpmConfidence: Int,
+        keyConfidence: Int,
+        apiKey: String
+    ): SongMetadataResult = withContext(Dispatchers.IO) {
+        val cleanKey = apiKey.trim()
+        if (cleanKey.isBlank()) {
+            return@withContext SongMetadataResult(dspBpm, dspKey, "")
+        }
+
+        val promptText = "I analyzed the song '$title' by '$artist' and detected BPM ~$dspBpm (confidence $bpmConfidence%) and key ~$dspKey (confidence $keyConfidence%), but I'm not confident. Based on what you know, what are the actual BPM and musical key? Respond with: BPM: [number], Key: [key name]."
+
+        val jsonBody = JSONObject().apply {
+            put("contents", JSONArray().apply {
+                put(JSONObject().apply {
+                    put("parts", JSONArray().apply {
+                        put(JSONObject().apply { put("text", promptText) })
+                    })
+                })
+            })
+            put("tools", JSONArray().apply {
+                put(JSONObject().apply { put("googleSearch", JSONObject()) })
+            })
+        }
+
+        val requestBody = jsonBody.toString().toRequestBody("application/json; charset=utf-8".toMediaType())
+
+        for (model in modelCandidates) {
+            try {
+                val endpoint = "https://generativelanguage.googleapis.com/v1beta/models/$model:generateContent?key=$cleanKey"
+                val request = Request.Builder()
+                    .url(endpoint)
+                    .post(requestBody)
+                    .build()
+
+                client.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) {
+                        val responseBodyStr = response.body?.string() ?: ""
+                        val responseJson = JSONObject(responseBodyStr)
+                        val candidates = responseJson.optJSONArray("candidates") ?: return@use
+                        if (candidates.length() > 0) {
+                            val text = candidates.getJSONObject(0)
+                                .optJSONObject("content")
+                                ?.optJSONArray("parts")
+                                ?.optJSONObject(0)
+                                ?.optString("text", "") ?: ""
+                            
+                            Log.d("GeminiBpmService", "Validation Response ($model) for '$title': $text")
+                            val parsed = parseMetadataResponse(text)
+                            if (parsed.bpm != null || parsed.musicalKey != "Unknown") {
+                                return@withContext parsed
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("GeminiBpmService", "Exception validating metadata for '$title' with model $model", e)
+            }
+        }
+
+        // Fallback to standard lookup if specific validation prompt failed
+        lookupMetadata(title, artist, apiKey)
+    }
+
     suspend fun lookupMetadata(
         title: String,
         artist: String,

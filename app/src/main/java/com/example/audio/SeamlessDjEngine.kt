@@ -15,6 +15,12 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.max
 import kotlin.math.min
 
+import com.example.audio.phase_vocoder.AudioStretchProcessor
+import com.example.audio.phase_vocoder.BasicSpeedStretchProcessor
+import com.example.audio.phase_vocoder.PhaseVocoderMetrics
+import com.example.audio.phase_vocoder.PhaseVocoderProcessor
+import com.example.audio.phase_vocoder.PhaseVocoderStretchProcessor
+
 enum class ActiveDeck {
     DECK_A,
     DECK_B
@@ -54,11 +60,66 @@ class SeamlessDjEngine(private val context: Context) {
     private var tickerJob: Job? = null
     private var transitionJob: Job? = null
 
+    private var stretchProcessor: AudioStretchProcessor = PhaseVocoderStretchProcessor(
+        onFallbackTriggered = {
+            Log.w("SeamlessDjEngine", "Phase Vocoder failure detected! Automatically falling back to basic speed adjustment.")
+            djSettings = djSettings.copy(usePhaseVocoder = false)
+            _engineState.value = _engineState.value.copy(
+                statusMessage = "Advanced time-stretching failed; falling back to basic speed adjustment."
+            )
+        }
+    )
+
     fun updateSettings(settings: DjSettings) {
         this.djSettings = settings
         _engineState.value = _engineState.value.copy(
             segmentTotalSec = settings.segmentDurationSec
         )
+        stretchProcessor = if (settings.usePhaseVocoder) {
+            PhaseVocoderStretchProcessor(
+                onFallbackTriggered = {
+                    Log.w("SeamlessDjEngine", "Phase Vocoder failure detected! Automatically falling back to basic speed adjustment.")
+                    djSettings = djSettings.copy(usePhaseVocoder = false)
+                    _engineState.value = _engineState.value.copy(
+                        statusMessage = "Advanced time-stretching failed; falling back to basic speed adjustment."
+                    )
+                }
+            )
+        } else {
+            BasicSpeedStretchProcessor()
+        }
+    }
+
+    fun getPhaseVocoderMetrics(): PhaseVocoderMetrics {
+        return PhaseVocoderProcessor.getMetrics()
+    }
+
+    fun runABComparisonTest(onStatusMessage: (String) -> Unit) {
+        val currentTrack = _engineState.value.currentTrack ?: return
+        scope.launch {
+            onStatusMessage("A/B Test Mode A: Phase Vocoder Time-Stretching Enabled (10 seconds)...")
+            val originalVocoderSetting = djSettings.usePhaseVocoder
+            djSettings = djSettings.copy(usePhaseVocoder = true)
+            stretchProcessor = PhaseVocoderStretchProcessor()
+
+            // Simulate synthetic buffer stretch for test verification
+            val dummyBuffer = FloatArray(4096) { kotlin.random.Random.nextFloat() * 0.5f }
+            stretchProcessor.stretch(dummyBuffer, 1.15f)
+
+            delay(10000L)
+
+            onStatusMessage("A/B Test Mode B: Basic Speed Adjustment (10 seconds)...")
+            djSettings = djSettings.copy(usePhaseVocoder = false)
+            stretchProcessor = BasicSpeedStretchProcessor()
+            stretchProcessor.stretch(dummyBuffer, 1.15f)
+
+            delay(10000L)
+
+            // Restore
+            djSettings = djSettings.copy(usePhaseVocoder = originalVocoderSetting)
+            updateSettings(djSettings)
+            onStatusMessage("A/B Comparison finished! Preserved choice: ${if (originalVocoderSetting) "Phase Vocoder" else "Basic Speed"}.")
+        }
     }
 
     fun setQueueAndPlay(tracks: List<Track>, startIndex: Int = 0) {
@@ -153,6 +214,35 @@ class SeamlessDjEngine(private val context: Context) {
             deckBSpinning = !isDeckA,
             statusMessage = "Playing continuous mix"
         )
+    }
+
+    /**
+     * SEEK & SCRUBBING FUNCTIONALITY:
+     * Allows rewinding or fast-forwarding during playback.
+     */
+    fun seekToSegmentPosition(seconds: Int) {
+        val state = _engineState.value
+        val total = max(1, state.segmentTotalSec)
+        val clampedSec = seconds.coerceIn(0, total)
+        _engineState.value = state.copy(segmentElapsedSec = clampedSec)
+
+        val track = state.currentTrack ?: return
+        val targetMs = ((track.introOffsetSec + clampedSec) * 1000).toLong()
+
+        try {
+            if (state.activeDeck == ActiveDeck.DECK_A) {
+                playerA?.seekTo(targetMs.toInt())
+            } else {
+                playerB?.seekTo(targetMs.toInt())
+            }
+        } catch (e: Exception) {
+            Log.e("SeamlessDjEngine", "Error seeking playback", e)
+        }
+    }
+
+    fun seekByDelta(deltaSeconds: Int) {
+        val current = _engineState.value.segmentElapsedSec
+        seekToSegmentPosition(current + deltaSeconds)
     }
 
     /**
@@ -405,11 +495,19 @@ class SeamlessDjEngine(private val context: Context) {
                     setVolume(1.0f, 1.0f)
                     prepareAsync()
                     setOnPreparedListener { mp ->
-                        mp.seekTo(track.introOffsetSec * 1000)
-                        mp.start()
+                        try {
+                            mp.seekTo(track.introOffsetSec * 1000)
+                            mp.start()
+                        } catch (e: Exception) {
+                            Log.e("SeamlessDjEngine", "OnPrepared error", e)
+                        }
                     }
                     setOnCompletionListener {
                         scope.launch { skipToNextTrack() }
+                    }
+                    setOnErrorListener { _, what, extra ->
+                        Log.e("SeamlessDjEngine", "MediaPlayer A error: what=$what, extra=$extra")
+                        true
                     }
                 }
             }
@@ -434,8 +532,16 @@ class SeamlessDjEngine(private val context: Context) {
                     setVolume(0.0f, 0.0f)
                     prepareAsync()
                     setOnPreparedListener { mp ->
-                        mp.seekTo(startMs.toInt())
-                        mp.start()
+                        try {
+                            mp.seekTo(startMs.toInt())
+                            mp.start()
+                        } catch (e: Exception) {
+                            Log.e("SeamlessDjEngine", "OnPrepared setup A error", e)
+                        }
+                    }
+                    setOnErrorListener { _, what, extra ->
+                        Log.e("SeamlessDjEngine", "MediaPlayer setup A error: what=$what, extra=$extra")
+                        true
                     }
                 }
             }
@@ -460,8 +566,16 @@ class SeamlessDjEngine(private val context: Context) {
                     setVolume(0.0f, 0.0f)
                     prepareAsync()
                     setOnPreparedListener { mp ->
-                        mp.seekTo(startMs.toInt())
-                        mp.start()
+                        try {
+                            mp.seekTo(startMs.toInt())
+                            mp.start()
+                        } catch (e: Exception) {
+                            Log.e("SeamlessDjEngine", "OnPrepared setup B error", e)
+                        }
+                    }
+                    setOnErrorListener { _, what, extra ->
+                        Log.e("SeamlessDjEngine", "MediaPlayer setup B error: what=$what, extra=$extra")
+                        true
                     }
                 }
             }

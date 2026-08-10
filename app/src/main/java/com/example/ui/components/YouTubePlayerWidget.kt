@@ -143,7 +143,10 @@ fun YouTubePlayerWidget(
                     }
                 },
                 update = { webView ->
-                    webView.loadDataWithBaseURL("https://www.youtube.com", htmlContent, "text/html", "UTF-8", null)
+                    if (webView.tag != htmlContent) {
+                        webView.tag = htmlContent
+                        webView.loadDataWithBaseURL("https://www.youtube.com", htmlContent, "text/html", "UTF-8", null)
+                    }
                 },
                 modifier = Modifier.fillMaxSize()
             )

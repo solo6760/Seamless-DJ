@@ -53,8 +53,10 @@ data class DjSettingsEntity(
     val startOffsetSec: Int,
     val crossfadeDurationSec: Int,
     val autoBpmMatch: Boolean,
+    val usePhaseVocoder: Boolean = true,
     val partyLightsEnabled: Boolean,
-    val partyRoomCode: String
+    val partyRoomCode: String,
+    val isDarkMode: Boolean = true
 )
 
 @Entity(tableName = "song_bpm_cache")
@@ -69,9 +71,13 @@ data class SongBpmEntity(
 data class SongMetadataEntity(
     @PrimaryKey val trackKey: String,
     val bpm: Int,
+    val bpmConfidence: Int = 80,
     val musicalKey: String,
     val camelotKey: String,
+    val keyConfidence: Int = 80,
+    val validatedByGemini: Boolean = false,
     val status: String,
+    val analysisConfidence: String = "medium",
     val timestamp: Long = System.currentTimeMillis()
 )
 

@@ -10,10 +10,7 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoMode
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.MusicNote
-import androidx.compose.material.icons.filled.RadioButtonUnchecked
+import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -28,6 +25,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.data.model.Playlist
+import com.example.data.model.Track
 import com.example.ui.theme.*
 
 @Composable
@@ -39,6 +37,7 @@ fun OptimizePlaylistDialog(
 ) {
     var selectedIndex by remember { mutableStateOf(0) }
     var optimizeTransitions by remember { mutableStateOf(true) }
+    var trackListState by remember(playlist) { mutableStateOf(playlist.tracks) }
 
     Dialog(
         onDismissRequest = { if (!isOptimizing) onDismiss() },
@@ -48,40 +47,39 @@ fun OptimizePlaylistDialog(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .wrapContentHeight()
-                .border(1.dp, DjCardBorder, RoundedCornerShape(20.dp))
+                .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(24.dp))
                 .testTag("optimize_playlist_dialog"),
-            shape = RoundedCornerShape(20.dp),
-            color = DjSurface
+            shape = RoundedCornerShape(24.dp),
+            color = MaterialTheme.colorScheme.surface
         ) {
             Column(
                 modifier = Modifier
                     .padding(20.dp)
                     .fillMaxWidth()
             ) {
-                // Header Title
+                // Header
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Icon(
                         imageVector = Icons.Default.AutoMode,
-                        contentDescription = "Smart Automix",
-                        tint = NeonViolet,
+                        contentDescription = "Automix Config",
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(28.dp)
                     )
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
                             text = "AUTOMIX QUEUE CONFIG",
-                            fontWeight = FontWeight.Black,
-                            color = TextPrimary,
-                            fontSize = 16.sp
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            fontWeight = FontWeight.Bold
                         )
                         Text(
                             text = playlist.name,
-                            color = NeonCyan,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
@@ -90,13 +88,13 @@ fun OptimizePlaylistDialog(
 
                 Spacer(modifier = Modifier.height(14.dp))
 
-                // Reorder Toggle Option
+                // Reorder Toggle
                 Surface(
-                    color = DjSurfaceVariant,
+                    color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .border(1.dp, DjCardBorder, RoundedCornerShape(12.dp))
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
                 ) {
                     Row(
                         modifier = Modifier
@@ -108,25 +106,22 @@ fun OptimizePlaylistDialog(
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
                                 text = "Reorder for Smooth Transitions",
-                                fontWeight = FontWeight.Bold,
-                                color = TextPrimary,
-                                fontSize = 13.sp
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Weighted match: Key compatibility (60%), BPM (30%), Beat Grid (10%)",
-                                color = TextSecondary,
-                                fontSize = 10.sp,
-                                lineHeight = 13.sp
+                                text = "Optimizes key compatibility (60%), BPM pitch match (30%), & beat drops (10%).",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Switch(
                             checked = optimizeTransitions,
                             onCheckedChange = { optimizeTransitions = it },
                             colors = SwitchDefaults.colors(
-                                checkedThumbColor = Color.Black,
-                                checkedTrackColor = NeonViolet,
-                                uncheckedBorderColor = DjCardBorder
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = MaterialTheme.colorScheme.primary
                             ),
                             modifier = Modifier.testTag("optimize_transitions_switch")
                         )
@@ -136,39 +131,38 @@ fun OptimizePlaylistDialog(
                 Spacer(modifier = Modifier.height(14.dp))
 
                 Text(
-                    text = "PICK A STARTING TRACK:",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextSecondary,
-                    letterSpacing = 0.5.sp
+                    text = "PICK STARTING TRACK & REORDER QUEUE:",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
-                // Scrollable List of Songs
+                // Scrollable List of Songs with Up/Down Swapping
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 220.dp)
+                        .heightIn(max = 240.dp)
                         .clip(RoundedCornerShape(12.dp))
-                        .background(DjBackground)
-                        .border(1.dp, DjCardBorder, RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.background)
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
                 ) {
                     LazyColumn(
                         modifier = Modifier.padding(6.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        itemsIndexed(playlist.tracks) { index, track ->
+                        itemsIndexed(trackListState) { index, track ->
                             val isSelected = index == selectedIndex
                             Surface(
-                                color = if (isSelected) NeonViolet.copy(alpha = 0.2f) else DjSurface,
+                                color = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surface,
                                 shape = RoundedCornerShape(8.dp),
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { selectedIndex = index }
                                     .border(
                                         width = 1.dp,
-                                        color = if (isSelected) NeonViolet else Color.Transparent,
+                                        color = if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent,
                                         shape = RoundedCornerShape(8.dp)
                                     )
                                     .testTag("starting_track_item_$index")
@@ -180,42 +174,72 @@ fun OptimizePlaylistDialog(
                                     Icon(
                                         imageVector = if (isSelected) Icons.Default.CheckCircle else Icons.Default.RadioButtonUnchecked,
                                         contentDescription = "Select",
-                                        tint = if (isSelected) NeonViolet else TextMuted,
+                                        tint = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                                         modifier = Modifier.size(20.dp)
                                     )
-                                    Spacer(modifier = Modifier.width(10.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+
                                     Column(modifier = Modifier.weight(1f)) {
                                         Text(
                                             text = track.title,
-                                            fontWeight = FontWeight.Bold,
-                                            color = if (isSelected) TextPrimary else TextSecondary,
-                                            fontSize = 12.sp,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            color = MaterialTheme.colorScheme.onSurface,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = track.artist,
-                                            color = TextMuted,
-                                            fontSize = 10.sp,
+                                            text = "${track.artist} • ${track.bpm} BPM ${if (track.musicalKey.isNotBlank()) "• Key " + track.musicalKey else ""}",
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1
                                         )
                                     }
-                                    Spacer(modifier = Modifier.width(6.dp))
-                                    Column(horizontalAlignment = Alignment.End) {
-                                        if (track.musicalKey.isNotBlank() && track.musicalKey != "Unknown") {
-                                            Text(
-                                                text = "🎹 ${track.musicalKey}",
-                                                color = NeonEmerald,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
+
+                                    // Adjacent Reorder Buttons
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        if (index > 0) {
+                                            IconButton(
+                                                onClick = {
+                                                    val mutable = trackListState.toMutableList()
+                                                    val temp = mutable[index]
+                                                    mutable[index] = mutable[index - 1]
+                                                    mutable[index - 1] = temp
+                                                    trackListState = mutable
+                                                    if (selectedIndex == index) selectedIndex--
+                                                    else if (selectedIndex == index - 1) selectedIndex++
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ArrowUpward,
+                                                    contentDescription = "Move Up",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
                                         }
-                                        Text(
-                                            text = "${track.bpm} BPM",
-                                            color = NeonAmber,
-                                            fontSize = 10.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+
+                                        if (index < trackListState.size - 1) {
+                                            IconButton(
+                                                onClick = {
+                                                    val mutable = trackListState.toMutableList()
+                                                    val temp = mutable[index]
+                                                    mutable[index] = mutable[index + 1]
+                                                    mutable[index + 1] = temp
+                                                    trackListState = mutable
+                                                    if (selectedIndex == index) selectedIndex++
+                                                    else if (selectedIndex == index + 1) selectedIndex--
+                                                },
+                                                modifier = Modifier.size(28.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ArrowDownward,
+                                                    contentDescription = "Move Down",
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -225,26 +249,28 @@ fun OptimizePlaylistDialog(
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // Spinner / Loading Indicator if optimizing
+                // Progress Bar or Actions
                 if (isOptimizing) {
-                    Row(
+                    Column(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.Center
+                        horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = NeonCyan,
-                            strokeWidth = 2.dp
+                        LinearProgressIndicator(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(4.dp)
+                                .clip(RoundedCornerShape(2.dp)),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.surfaceVariant
                         )
-                        Spacer(modifier = Modifier.width(12.dp))
+                        Spacer(modifier = Modifier.height(8.dp))
                         Text(
                             text = "Building optimized queue...",
-                            color = NeonCyan,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 13.sp
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
                         )
                     }
                 } else {
@@ -256,24 +282,23 @@ fun OptimizePlaylistDialog(
                             onClick = onDismiss,
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp)
+                                .height(48.dp)
                                 .testTag("cancel_optimize_dialog_button"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.outlinedButtonColors(contentColor = TextSecondary)
+                            shape = RoundedCornerShape(12.dp)
                         ) {
-                            Text("CANCEL", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("CANCEL", fontWeight = FontWeight.Bold)
                         }
 
                         Button(
                             onClick = { onConfirm(selectedIndex, optimizeTransitions) },
                             modifier = Modifier
                                 .weight(1f)
-                                .height(44.dp)
+                                .height(48.dp)
                                 .testTag("start_automix_confirm_button"),
-                            shape = RoundedCornerShape(10.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = NeonViolet)
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Text("START AUTOMIX", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            Text("START AUTOMIX", fontWeight = FontWeight.Bold)
                         }
                     }
                 }

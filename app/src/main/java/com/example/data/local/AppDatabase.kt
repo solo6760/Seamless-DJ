@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         SongMetadataEntity::class,
         BeatCacheEntity::class
     ],
-    version = 3,
+    version = 7,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
