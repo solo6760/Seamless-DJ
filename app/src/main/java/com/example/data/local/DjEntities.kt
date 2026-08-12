@@ -80,6 +80,14 @@ data class SongMetadataEntity(
     val analysisConfidence: String = "medium",
     val energyScore: Int = 50,
     val lufs: Float = -14.0f,
+    val phraseBoundariesJson: String = "",
+    val spectralFluxCsv: String = "",
+    val lowEnergy: Float = 0.33f,
+    val midEnergy: Float = 0.33f,
+    val highEnergy: Float = 0.33f,
+    val optimalDropOffsetSec: Int = 20,
+    val optimalOutroOffsetSec: Int = 0,
+    val perceptualLufs: Float = -14.0f,
     val timestamp: Long = System.currentTimeMillis()
 )
 
@@ -90,4 +98,3 @@ data class BeatCacheEntity(
     val bpm: Int,
     val timestamp: Long = System.currentTimeMillis()
 )
-

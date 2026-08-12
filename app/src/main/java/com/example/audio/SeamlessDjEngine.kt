@@ -3,15 +3,18 @@ package com.example.audio
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.media.PlaybackParams
+import android.os.Build
 import android.util.Log
-import com.example.data.model.BpmStatus
-import com.example.data.model.DjSettings
-import com.example.data.model.Track
-import com.example.data.model.TrackSource
+import com.example.audio.processor.*
+import com.example.data.model.*
+import com.example.util.CamelotWheel
+import com.example.util.SmartPlaylistOptimizer
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -42,10 +45,12 @@ data class DjEngineState(
     val deckASpinning: Boolean = false,
     val deckBSpinning: Boolean = false,
     val automixEnabled: Boolean = true,
-    val automixModeName: String = "Spotify/Apple Style Automix (Equal Power Beat-Blend)",
+    val automixModeName: String = "Spotify/Apple Style Automix (Content-Aware Dynamic Blend)",
     val statusMessage: String = "Ready for party",
-    val activeTransitionType: com.example.data.model.TransitionType = com.example.data.model.TransitionType.CROSSFADE,
-    val lastCompatibilityScore: Float = 1.0f
+    val activeTransitionType: TransitionType = TransitionType.CROSSFADE,
+    val activeTransitionDecision: TransitionDecision? = null,
+    val lastCompatibilityScore: Float = 1.0f,
+    val currentPhraseLabel: String = "Intro"
 )
 
 class SeamlessDjEngine(private val context: Context) {
@@ -61,6 +66,12 @@ class SeamlessDjEngine(private val context: Context) {
     private var djSettings = DjSettings()
     private var tickerJob: Job? = null
     private var transitionJob: Job? = null
+
+    private val beatDetectionEngine = BeatDetectionEngine(context)
+    private val multiBandEqProcessor = MultiBandEqProcessor()
+    private val filterSweepProcessor = FilterSweepProcessor()
+    private val riserSweepProcessor = RiserSweepProcessor()
+    private val echoOutProcessor = EchoOutProcessor()
 
     private var stretchProcessor: AudioStretchProcessor = PhaseVocoderStretchProcessor(
         onFallbackTriggered = {
@@ -97,14 +108,12 @@ class SeamlessDjEngine(private val context: Context) {
     }
 
     fun runABComparisonTest(onStatusMessage: (String) -> Unit) {
-        val currentTrack = _engineState.value.currentTrack ?: return
         scope.launch {
             onStatusMessage("A/B Test Mode A: Phase Vocoder Time-Stretching Enabled (10 seconds)...")
             val originalVocoderSetting = djSettings.usePhaseVocoder
             djSettings = djSettings.copy(usePhaseVocoder = true)
             stretchProcessor = PhaseVocoderStretchProcessor()
 
-            // Simulate synthetic buffer stretch for test verification
             val dummyBuffer = FloatArray(4096) { kotlin.random.Random.nextFloat() * 0.5f }
             stretchProcessor.stretch(dummyBuffer, 1.15f)
 
@@ -117,7 +126,6 @@ class SeamlessDjEngine(private val context: Context) {
 
             delay(10000L)
 
-            // Restore
             djSettings = djSettings.copy(usePhaseVocoder = originalVocoderSetting)
             updateSettings(djSettings)
             onStatusMessage("A/B Comparison finished! Preserved choice: ${if (originalVocoderSetting) "Phase Vocoder" else "Basic Speed"}.")
@@ -151,6 +159,7 @@ class SeamlessDjEngine(private val context: Context) {
                 queue = remainingQueue,
                 deckASpinning = true,
                 deckBSpinning = false,
+                currentPhraseLabel = current.phraseBoundaries.firstOrNull()?.type?.displayName ?: "Intro",
                 statusMessage = "Deck A playing: ${current.title}"
             )
 
@@ -218,10 +227,6 @@ class SeamlessDjEngine(private val context: Context) {
         )
     }
 
-    /**
-     * SEEK & SCRUBBING FUNCTIONALITY:
-     * Allows rewinding or fast-forwarding during playback.
-     */
     fun seekToSegmentPosition(seconds: Int) {
         val state = _engineState.value
         val total = max(1, state.segmentTotalSec)
@@ -247,10 +252,6 @@ class SeamlessDjEngine(private val context: Context) {
         seekToSegmentPosition(current + deltaSeconds)
     }
 
-    /**
-     * SKIP FUNCTION:
-     * Triggers smooth beat-matched crossfade transition immediately on skip button tap!
-     */
     fun skipToNextTrack() {
         val state = _engineState.value
         if (state.isCrossfading) return
@@ -264,7 +265,7 @@ class SeamlessDjEngine(private val context: Context) {
     fun toggleAutomix(enabled: Boolean) {
         _engineState.value = _engineState.value.copy(
             automixEnabled = enabled,
-            statusMessage = if (enabled) "Automix Mode Activated (Equal Power Continuous Crossfade)" else "Manual DJ Mode"
+            statusMessage = if (enabled) "Content-Aware Automix Active" else "Manual DJ Mode"
         )
     }
 
@@ -278,12 +279,31 @@ class SeamlessDjEngine(private val context: Context) {
 
                 val newElapsed = state.segmentElapsedSec + 1
                 val targetSegment = state.segmentTotalSec
-                val transitionTriggerSec = max(10, targetSegment - djSettings.crossfadeDurationSec)
 
-                _engineState.value = state.copy(segmentElapsedSec = newElapsed)
+                val currentTrack = state.currentTrack
+                val trackDurationSec = if (currentTrack != null && currentTrack.durationMs > 0) {
+                    (currentTrack.durationMs / 1000).toInt()
+                } else targetSegment
 
-                if (newElapsed >= transitionTriggerSec) {
-                    triggerSeamlessCrossfade(reason = "Automix ${djSettings.crossfadeDurationSec}s Beat Blend")
+                // 1. Phrase-Aligned Transition Check (Requirement 1 & 6)
+                val currentTrackPosMs = ((currentTrack?.introOffsetSec ?: 0) + newElapsed) * 1000L
+                val currentPhrase = currentTrack?.phraseBoundaries?.lastOrNull { it.timestampMs <= currentTrackPosMs }
+                val currentPhraseLabel = currentPhrase?.type?.displayName ?: "Playing"
+
+                // Check if approaching outro phrase or target segment limit
+                val outroBoundary = currentTrack?.phraseBoundaries?.firstOrNull { it.type == PhraseType.OUTRO }
+                val isAtOutroPhrase = outroBoundary != null && currentTrackPosMs >= outroBoundary.timestampMs - (djSettings.crossfadeDurationSec * 1000L)
+
+                val isAtSegmentLimit = newElapsed >= max(10, targetSegment - djSettings.crossfadeDurationSec)
+
+                _engineState.value = state.copy(
+                    segmentElapsedSec = newElapsed,
+                    currentPhraseLabel = currentPhraseLabel
+                )
+
+                if (isAtOutroPhrase || isAtSegmentLimit) {
+                    val triggerReason = if (isAtOutroPhrase) "Natural Outro Phrase Transition" else "Automix Beat Blend"
+                    triggerSeamlessCrossfade(reason = triggerReason)
                 }
             }
         }
@@ -323,117 +343,115 @@ class SeamlessDjEngine(private val context: Context) {
         updateTrackResolvedMetadata(trackId, bpm, status)
     }
 
+    /**
+     * Content-Aware Multi-Band Seamless Transition Execution (Requirements 1, 3, 6, 7, 9, 10).
+     */
     private suspend fun triggerSeamlessCrossfade(reason: String) {
         val state = _engineState.value
         val incomingTrack = state.nextTrack ?: state.queue.firstOrNull() ?: return
-        val currentTrack = state.currentTrack
+        val currentTrack = state.currentTrack ?: return
         val currentActive = state.activeDeck
         val incomingDeck = if (currentActive == ActiveDeck.DECK_A) ActiveDeck.DECK_B else ActiveDeck.DECK_A
 
-        // Calculate weighted compatibility score (50% Key, 30% BPM, 20% Energy)
-        val compatibilityScore = if (currentTrack != null) {
-            com.example.util.SmartPlaylistOptimizer.calculateCompatibilityScore(currentTrack, incomingTrack)
-        } else 1.0f
+        // 1. Compute multi-dimensional transition decision
+        val decision = SmartPlaylistOptimizer.createTransitionDecision(currentTrack, incomingTrack)
+        val selectedTransition = decision.type
+        val compatibilityScore = decision.overallScore
 
-        val selectedTransition = com.example.data.model.selectTransitionType(compatibilityScore)
-        val keyScore = com.example.util.CamelotWheel.getCompatibilityScore(currentTrack?.musicalKey, incomingTrack.musicalKey)
+        // 2. Onset-based beat alignment (Requirement 9)
+        val currentTrackPosMs = ((currentTrack.introOffsetSec + state.segmentElapsedSec) * 1000L)
+        val (alignedOutMs, alignedInMs) = beatDetectionEngine.findAlignedOnsetTransition(
+            outgoingBeats = currentTrack.beatTimesMs,
+            incomingBeats = incomingTrack.beatTimesMs,
+            targetTransitionTimeMs = currentTrackPosMs,
+            incomingDropOffsetMs = decision.dropStartMs
+        )
 
-        val outgoingBpmKnown = currentTrack != null && currentTrack.bpmStatus == BpmStatus.RESOLVED && currentTrack.bpm in 40..220
-        val incomingBpmKnown = incomingTrack.bpmStatus == BpmStatus.RESOLVED && incomingTrack.bpm in 40..220
-        val isBeatMatched = keyScore >= 0.8f && outgoingBpmKnown && incomingBpmKnown
-
-        // Determine Fade Strategy & Duration
-        val fadeDurationMs = when {
-            isBeatMatched -> 2200L
-            compatibilityScore >= 0.7f -> (djSettings.crossfadeDurationSec * 1000L).coerceAtLeast(12000L)
-            else -> 20000L
-        }
-
-        val syncStatusText = "${selectedTransition.iconSymbol} ${selectedTransition.displayName} • Compatibility: ${(compatibilityScore * 100).toInt()}%"
+        val fadeDurationMs = decision.transitionDurationMs.coerceAtLeast(6000L)
+        val syncStatusText = "${selectedTransition.iconSymbol} ${selectedTransition.displayName} (${(compatibilityScore * 100).toInt()}%)"
 
         _engineState.value = state.copy(
             isCrossfading = true,
             deckASpinning = true,
             deckBSpinning = true,
             activeTransitionType = selectedTransition,
+            activeTransitionDecision = decision,
             lastCompatibilityScore = compatibilityScore,
-            statusMessage = "Automixing: $reason • $syncStatusText"
+            statusMessage = "$reason • $syncStatusText"
         )
 
-        // Calculate LUFS Loudness Normalization Gains (Target: -14.0 LUFS)
-        val outgoingLufs = currentTrack?.lufs ?: -14.0f
-        val outgoingLufsScale = Math.pow(10.0, ((-14.0f - outgoingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.2f, 2.0f)
+        // 3. Calculate LUFS Loudness Normalization Gains (Target: -14.0 LUFS)
+        val outgoingLufs = currentTrack.lufs
+        val outgoingLufsScale = Math.pow(10.0, ((-14.0f - outgoingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.3f, 1.8f)
 
         val incomingLufs = incomingTrack.lufs
-        val incomingLufsScale = Math.pow(10.0, ((-14.0f - incomingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.2f, 2.0f)
+        val incomingLufsScale = Math.pow(10.0, ((-14.0f - incomingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.3f, 1.8f)
 
-        // 1. Prepare incoming deck player with beat boundary snapping
-        val rawStartMs = (incomingTrack.introOffsetSec * 1000L).coerceAtLeast(0L)
-        val dropStartMs = if (isBeatMatched && incomingTrack.beatTimesMs.isNotEmpty()) {
-            incomingTrack.beatTimesMs.minByOrNull { Math.abs(it - rawStartMs) } ?: rawStartMs
-        } else {
-            rawStartMs
-        }
-
+        // 4. Setup incoming player at aligned onset drop point
         if (incomingDeck == ActiveDeck.DECK_B) {
-            setupPlayerB(incomingTrack, dropStartMs)
+            setupPlayerB(incomingTrack, alignedInMs)
         } else {
-            setupPlayerA(incomingTrack, dropStartMs)
+            setupPlayerA(incomingTrack, alignedInMs)
         }
 
-        // Calculate initial tempo-stretch ratio for beat matching
+        // Tempo matching & pitch shift (Requirement 10)
         var initialSpeedRatio = 1.0f
         var shouldRampSpeed = false
-        if (isBeatMatched && currentTrack != null) {
-            val ratio = currentTrack.bpm.toFloat() / incomingTrack.bpm.toFloat()
-            if (ratio in 0.80f..1.20f) {
-                initialSpeedRatio = ratio
-                shouldRampSpeed = true
-                try {
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                        val incomingPlayer = if (incomingDeck == ActiveDeck.DECK_B) playerB else playerA
-                        val params = incomingPlayer?.playbackParams ?: android.media.PlaybackParams()
-                        incomingPlayer?.playbackParams = params.setSpeed(initialSpeedRatio)
-                    }
-                } catch (e: Exception) {
-                    Log.w("SeamlessDjEngine", "Speed ratio adjustment failed", e)
+        val bpmRatio = currentTrack.bpm.toFloat() / incomingTrack.bpm.toFloat()
+        if (bpmRatio in 0.80f..1.20f && currentTrack.bpmStatus == BpmStatus.RESOLVED && incomingTrack.bpmStatus == BpmStatus.RESOLVED) {
+            initialSpeedRatio = bpmRatio
+            shouldRampSpeed = true
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    val incomingPlayer = if (incomingDeck == ActiveDeck.DECK_B) playerB else playerA
+                    val params = incomingPlayer?.playbackParams ?: PlaybackParams()
+                    incomingPlayer?.playbackParams = params.setSpeed(initialSpeedRatio)
                 }
+            } catch (e: Exception) {
+                Log.w("SeamlessDjEngine", "Speed ratio adjustment error", e)
             }
         }
 
-        // 2. Perform transition with transition processor and LUFS loudness normalization
-        val steps = 25
-        val stepDelay = (fadeDurationMs / steps).coerceAtLeast(40L)
-
-        val eqFadeProcessor = com.example.audio.processor.EqFadeProcessor()
-        val filterSweepProcessor = com.example.audio.processor.FilterSweepProcessor()
-        val echoOutProcessor = com.example.audio.processor.EchoOutProcessor()
+        // 5. Run smooth multi-band EQ / filter / riser transition loop
+        val steps = 30
+        val stepDelay = (fadeDurationMs / steps).coerceAtLeast(35L)
 
         for (i in 0..steps) {
             val progress = i.toFloat() / steps
 
-            val (rawOut, rawIn) = when (selectedTransition) {
-                com.example.data.model.TransitionType.CROSSFADE -> {
+            val (rawOutVol, rawInVol) = when (selectedTransition) {
+                TransitionType.CROSSFADE -> {
                     val outV = kotlin.math.cos(progress * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
                     val inV = kotlin.math.sin(progress * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
                     Pair(outV, inV)
                 }
-                com.example.data.model.TransitionType.EQ_FADE -> {
-                    val eqV = eqFadeProcessor.calculateEqVolumes(progress)
-                    Pair(eqV.outgoingMainVolume * eqV.outgoingBassGain, eqV.incomingMainVolume * eqV.incomingBassGain)
+                TransitionType.EQ_FADE -> {
+                    val eqGains = multiBandEqProcessor.calculateGains(
+                        progress = progress,
+                        outgoingProfile = currentTrack.frequencyProfile,
+                        incomingProfile = incomingTrack.frequencyProfile
+                    )
+                    // Bass swap: composite gain reflecting low + mid + high isolation
+                    val outComposite = eqGains.outgoingOverallVol * (0.5f * eqGains.outgoingLowGain + 0.3f * eqGains.outgoingMidGain + 0.2f * eqGains.outgoingHighGain)
+                    val inComposite = eqGains.incomingOverallVol * (0.5f * eqGains.incomingLowGain + 0.3f * eqGains.incomingMidGain + 0.2f * eqGains.incomingHighGain)
+                    Pair(outComposite.coerceIn(0f, 1f), inComposite.coerceIn(0f, 1f))
                 }
-                com.example.data.model.TransitionType.FILTER_SWEEP -> {
+                TransitionType.FILTER_SWEEP -> {
                     val fs = filterSweepProcessor.calculateFilterState(progress)
                     Pair(fs.outgoingVolume, fs.incomingVolume)
                 }
-                com.example.data.model.TransitionType.ECHO_OUT -> {
+                TransitionType.RISER_SWEEP -> {
+                    val rs = riserSweepProcessor.calculateRiserState(progress)
+                    Pair(rs.outgoingVolume, rs.incomingVolume)
+                }
+                TransitionType.ECHO_OUT -> {
                     val echo = echoOutProcessor.calculateEchoState(progress)
                     Pair(echo.outgoingVolume, echo.incomingVolume)
                 }
             }
 
-            val outgoingVol = (rawOut * outgoingLufsScale).coerceIn(0f, 1f)
-            val incomingVol = (rawIn * incomingLufsScale).coerceIn(0f, 1f)
+            val outgoingVol = (rawOutVol * outgoingLufsScale).coerceIn(0f, 1f)
+            val incomingVol = (rawInVol * incomingLufsScale).coerceIn(0f, 1f)
 
             if (currentActive == ActiveDeck.DECK_A) {
                 playerA?.setVolume(outgoingVol, outgoingVol)
@@ -453,34 +471,29 @@ class SeamlessDjEngine(private val context: Context) {
                 )
             }
 
-            // Gradually ramp incoming player speed back to 1.0x during crossfade
-            if (shouldRampSpeed && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            // Gradually ramp incoming player tempo to 1.0x
+            if (shouldRampSpeed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 try {
                     val currentRampedSpeed = initialSpeedRatio + (1.0f - initialSpeedRatio) * progress
                     val incomingPlayer = if (incomingDeck == ActiveDeck.DECK_B) playerB else playerA
-                    val params = incomingPlayer?.playbackParams ?: android.media.PlaybackParams()
+                    val params = incomingPlayer?.playbackParams ?: PlaybackParams()
                     incomingPlayer?.playbackParams = params.setSpeed(currentRampedSpeed)
-                } catch (e: Exception) {
-                    // Ignore speed ramp errors
-                }
+                } catch (e: Exception) {}
             }
 
             delay(stepDelay)
         }
 
-        // Reset playback speed to 1.0f on completion
-        if (shouldRampSpeed && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+        // Restore incoming player speed to 1.0f
+        if (shouldRampSpeed && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 val incomingPlayer = if (incomingDeck == ActiveDeck.DECK_B) playerB else playerA
-                val params = incomingPlayer?.playbackParams ?: android.media.PlaybackParams()
+                val params = incomingPlayer?.playbackParams ?: PlaybackParams()
                 incomingPlayer?.playbackParams = params.setSpeed(1.0f)
             } catch (e: Exception) {}
         }
 
-        // 3. Complete transition, stop outgoing player, advance queue
-
-
-        // 3. Complete transition, stop outgoing player, advance queue
+        // 6. Stop outgoing player, update queue and active deck
         if (currentActive == ActiveDeck.DECK_A) {
             try { playerA?.stop(); playerA?.reset() } catch (e: Exception) {}
         } else {
@@ -508,6 +521,7 @@ class SeamlessDjEngine(private val context: Context) {
             queue = updatedQueue,
             deckASpinning = incomingDeck == ActiveDeck.DECK_A,
             deckBSpinning = incomingDeck == ActiveDeck.DECK_B,
+            currentPhraseLabel = incomingTrack.phraseBoundaries.firstOrNull()?.type?.displayName ?: "Drop",
             statusMessage = "Now playing on Deck ${if (incomingDeck == ActiveDeck.DECK_A) "A" else "B"}: ${incomingTrack.title}"
         )
     }

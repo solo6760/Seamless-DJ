@@ -31,7 +31,14 @@ data class Track(
     val isBeatAnalyzing: Boolean = false,
     val energyScore: Int = 50,
     val lufs: Float = -14.0f,
-    val transitionType: TransitionType = TransitionType.CROSSFADE
+    val transitionType: TransitionType = TransitionType.CROSSFADE,
+    val phraseBoundaries: List<PhraseBoundary> = emptyList(),
+    val spectralFluxProfileCsv: String = "",
+    val frequencyProfile: FrequencyBandProfile = FrequencyBandProfile(),
+    val harmonicConfidence: Int = 80,
+    val optimalDropOffsetSec: Int = 20,
+    val optimalOutroOffsetSec: Int = 0,
+    val perceptualLoudnessLufs: Float = -14.0f
 ) {
 
     val energyCategory: String
@@ -48,4 +55,16 @@ data class Track(
             val seconds = totalSec % 60
             return String.format("%d:%02d", minutes, seconds)
         }
+
+    /**
+     * Parses the cached spectral flux profile CSV string into a float array.
+     */
+    fun getSpectralFluxVector(): FloatArray {
+        if (spectralFluxProfileCsv.isBlank()) return FloatArray(0)
+        return try {
+            spectralFluxProfileCsv.split(",").mapNotNull { it.trim().toFloatOrNull() }.toFloatArray()
+        } catch (e: Exception) {
+            FloatArray(0)
+        }
+    }
 }

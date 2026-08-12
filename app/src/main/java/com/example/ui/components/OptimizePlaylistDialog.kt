@@ -45,7 +45,7 @@ fun OptimizePlaylistDialog(
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.92f)
+                .fillMaxWidth(0.94f)
                 .wrapContentHeight()
                 .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(24.dp))
                 .testTag("optimize_playlist_dialog"),
@@ -71,7 +71,7 @@ fun OptimizePlaylistDialog(
                     Spacer(modifier = Modifier.width(10.dp))
                     Column(modifier = Modifier.weight(1f)) {
                         Text(
-                            text = "AUTOMIX QUEUE CONFIG",
+                            text = "SMART DJ SET BUILDER",
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface,
                             fontWeight = FontWeight.Bold
@@ -86,9 +86,9 @@ fun OptimizePlaylistDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
 
-                // Reorder Toggle
+                // Reorder Toggle with Narrative Arc description
                 Surface(
                     color = MaterialTheme.colorScheme.surfaceVariant,
                     shape = RoundedCornerShape(12.dp),
@@ -105,14 +105,14 @@ fun OptimizePlaylistDialog(
                     ) {
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Reorder for Smooth Transitions",
+                                text = "Narrative Energy Arc & Key Matching",
                                 style = MaterialTheme.typography.titleMedium,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Spacer(modifier = Modifier.height(2.dp))
                             Text(
-                                text = "Optimizes key compatibility (60%), BPM pitch match (30%), & beat drops (10%).",
-                                style = MaterialTheme.typography.bodyMedium,
+                                text = "Harmonic 4-D matching: Camelot Key (40%), BPM Drift (25%), Spectral Flux (20%), Energy Arc (15%).",
+                                style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
@@ -128,22 +128,90 @@ fun OptimizePlaylistDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Narrative Arc Energy Curve Visualizer
+                Surface(
+                    color = MaterialTheme.colorScheme.background,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
+                        .padding(10.dp)
+                ) {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "📈 SET ENERGY ARC",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "${trackListState.size} Tracks",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Mini Energy Bar Chart
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(36.dp),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            verticalAlignment = Alignment.Bottom
+                        ) {
+                            trackListState.forEachIndexed { i, track ->
+                                val heightFrac = (track.energyScore.toFloat() / 100f).coerceIn(0.2f, 1.0f)
+                                val isStartTrack = i == selectedIndex
+                                Box(
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .fillMaxHeight(heightFrac)
+                                        .clip(RoundedCornerShape(topStart = 3.dp, topEnd = 3.dp))
+                                        .background(
+                                            if (isStartTrack) WarmOrange
+                                            else MaterialTheme.colorScheme.primary.copy(alpha = 0.5f + (0.5f * heightFrac))
+                                        )
+                                )
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(text = "Warmup", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(text = "Peak Build", style = MaterialTheme.typography.labelSmall, color = WarmOrange)
+                            Text(text = "Climax & Outro", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(12.dp))
 
                 Text(
-                    text = "PICK STARTING TRACK & REORDER QUEUE:",
+                    text = "PICK STARTING TRACK & SEQUENCE:",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontWeight = FontWeight.Bold
                 )
 
-                Spacer(modifier = Modifier.height(8.dp))
+                Spacer(modifier = Modifier.height(6.dp))
 
                 // Scrollable List of Songs with Up/Down Swapping
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 240.dp)
+                        .heightIn(max = 200.dp)
                         .clip(RoundedCornerShape(12.dp))
                         .background(MaterialTheme.colorScheme.background)
                         .border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(12.dp))
@@ -188,8 +256,8 @@ fun OptimizePlaylistDialog(
                                             overflow = TextOverflow.Ellipsis
                                         )
                                         Text(
-                                            text = "${track.artist} • ${track.bpm} BPM ${if (track.musicalKey.isNotBlank()) "• Key " + track.musicalKey else ""}",
-                                            style = MaterialTheme.typography.bodyMedium,
+                                            text = "${track.artist} • ${track.bpm} BPM • ⚡${track.energyScore} ${if (track.musicalKey.isNotBlank()) "• Key " + track.musicalKey else ""}",
+                                            style = MaterialTheme.typography.bodySmall,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1
                                         )
@@ -247,7 +315,7 @@ fun OptimizePlaylistDialog(
                     }
                 }
 
-                Spacer(modifier = Modifier.height(16.dp))
+                Spacer(modifier = Modifier.height(14.dp))
 
                 // Progress Bar or Actions
                 if (isOptimizing) {
@@ -267,7 +335,7 @@ fun OptimizePlaylistDialog(
                         )
                         Spacer(modifier = Modifier.height(8.dp))
                         Text(
-                            text = "Building optimized queue...",
+                            text = "Optimizing harmonic & energy flow...",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.primary,
                             fontWeight = FontWeight.Bold

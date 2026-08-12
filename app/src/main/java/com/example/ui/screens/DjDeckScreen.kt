@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 import com.example.audio.ActiveDeck
 import com.example.data.model.Track
+import com.example.data.model.TransitionType
 import com.example.ui.DjViewModel
 import com.example.ui.components.ApiKeyOnboardingDialog
 import com.example.ui.components.CrossfadeMeter
@@ -95,7 +96,7 @@ fun DjDeckScreen(
             ) {
                 Column {
                     Text(
-                        text = "Automix DJ",
+                        text = "Automix DJ Pro",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onSurface,
                         fontWeight = FontWeight.Bold
@@ -104,7 +105,9 @@ fun DjDeckScreen(
                         text = engineState.statusMessage,
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Medium
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
                     )
                 }
 
@@ -173,7 +176,7 @@ fun DjDeckScreen(
                         .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    // Large Album Art (~60% width)
+                    // Large Album Art (~65% width)
                     Box(
                         modifier = Modifier
                             .fillMaxWidth(0.65f)
@@ -198,11 +201,28 @@ fun DjDeckScreen(
                                 modifier = Modifier.size(64.dp)
                             )
                         }
+
+                        // Phrase structural tag overlay on Album Art
+                        Surface(
+                            color = Color.Black.copy(alpha = 0.65f),
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(8.dp)
+                        ) {
+                            Text(
+                                text = "📍 ${engineState.currentPhraseLabel.uppercase()}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = WarmOrange,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
 
-                    // Song Title (Large 28-30sp bold)
+                    // Song Title (Large bold)
                     Text(
                         text = activeTrack?.title ?: "No Track Playing",
                         style = MaterialTheme.typography.headlineLarge,
@@ -214,7 +234,7 @@ fun DjDeckScreen(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    // Artist Name (Medium 18-20sp, secondary color)
+                    // Artist Name (Medium secondary color)
                     Text(
                         text = activeTrack?.artist ?: "Select a playlist from Music Sources",
                         style = MaterialTheme.typography.titleLarge,
@@ -226,10 +246,10 @@ fun DjDeckScreen(
 
                     Spacer(modifier = Modifier.height(12.dp))
 
-                    // BPM & Musical Key Pill Badges
+                    // DSP Metrics Pill Badges: BPM, Musical Key, LUFS Loudness, Energy Arc
                     if (activeTrack != null) {
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            horizontalArrangement = Arrangement.spacedBy(6.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Surface(
@@ -238,64 +258,51 @@ fun DjDeckScreen(
                                 modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     if (activeTrack.bpmStatus == com.example.data.model.BpmStatus.FETCHING || activeTrack.isBeatAnalyzing) {
                                         CircularProgressIndicator(
-                                            modifier = Modifier.size(12.dp),
+                                            modifier = Modifier.size(10.dp),
                                             strokeWidth = 2.dp,
                                             color = MaterialTheme.colorScheme.primary
                                         )
-                                        Spacer(modifier = Modifier.width(6.dp))
-                                        Text(
-                                            text = "Analyzing...",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = MaterialTheme.colorScheme.primary
-                                        )
-                                    } else if (activeTrack.bpmStatus == com.example.data.model.BpmStatus.UNKNOWN) {
-                                        Icon(
-                                            imageVector = Icons.Default.Speed,
-                                            contentDescription = "BPM",
-                                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.size(14.dp)
-                                        )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
-                                            text = "BPM unknown",
-                                            style = MaterialTheme.typography.labelLarge,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            text = "DSP...",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
                                         )
                                     } else {
                                         Icon(
                                             imageVector = Icons.Default.Speed,
                                             contentDescription = "BPM",
                                             tint = MaterialTheme.colorScheme.primary,
-                                            modifier = Modifier.size(14.dp)
+                                            modifier = Modifier.size(12.dp)
                                         )
                                         Spacer(modifier = Modifier.width(4.dp))
                                         Text(
                                             text = "${activeTrack.bpm} BPM",
-                                            style = MaterialTheme.typography.labelLarge,
+                                            style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.onSurface
                                         )
                                     }
                                 }
                             }
 
-                            if (activeTrack.bpmStatus == com.example.data.model.BpmStatus.RESOLVED && activeTrack.musicalKey.isNotBlank()) {
+                            if (activeTrack.musicalKey.isNotBlank()) {
                                 Surface(
                                     color = MaterialTheme.colorScheme.surfaceVariant,
                                     shape = RoundedCornerShape(16.dp),
                                     modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
                                 ) {
                                     Row(
-                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
                                         Text(
-                                            text = "🎹 Key: ${activeTrack.musicalKey}",
-                                            style = MaterialTheme.typography.labelLarge,
+                                            text = "🎹 ${activeTrack.musicalKey}",
+                                            style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.primary
                                         )
                                     }
@@ -309,13 +316,31 @@ fun DjDeckScreen(
                                 modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
-                                        text = "⚡ Energy: ${activeTrack.energyCategory}",
-                                        style = MaterialTheme.typography.labelLarge,
+                                        text = "⚡ ${activeTrack.energyCategory} (${activeTrack.energyScore})",
+                                        style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurface
+                                    )
+                                }
+                            }
+
+                            // LUFS Normalization Target
+                            Surface(
+                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                shape = RoundedCornerShape(16.dp),
+                                modifier = Modifier.border(1.dp, MaterialTheme.colorScheme.outline, RoundedCornerShape(16.dp))
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "🔊 ${String.format("%.1f", activeTrack.lufs)} LUFS",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
@@ -323,6 +348,67 @@ fun DjDeckScreen(
                     }
 
                     Spacer(modifier = Modifier.height(16.dp))
+
+                    // Live Crossfade / Multi-Band EQ Transition HUD
+                    if (engineState.isCrossfading) {
+                        Surface(
+                            color = WarmOrange.copy(alpha = 0.12f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(bottom = 12.dp)
+                                .border(1.dp, WarmOrange.copy(alpha = 0.4f), RoundedCornerShape(12.dp))
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "${engineState.activeTransitionType.iconSymbol} ${engineState.activeTransitionType.displayName} Mixing",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = WarmOrange,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "${(engineState.crossfadeProgress * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = WarmOrange,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                }
+
+                                Spacer(modifier = Modifier.height(4.dp))
+                                LinearProgressIndicator(
+                                    progress = { engineState.crossfadeProgress },
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .height(6.dp)
+                                        .clip(RoundedCornerShape(3.dp)),
+                                    color = WarmOrange,
+                                    trackColor = MaterialTheme.colorScheme.surfaceVariant
+                                )
+
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween
+                                ) {
+                                    Text(
+                                        text = "Deck A Vol: ${(engineState.deckAVolume * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Text(
+                                        text = "Deck B Vol: ${(engineState.deckBVolume * 100).toInt()}%",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
+                    }
 
                     // Segment Tracker & Progress Scrubber Slider
                     val segmentElapsed = engineState.segmentElapsedSec
@@ -346,9 +432,9 @@ fun DjDeckScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Text(
-                                text = "Transition in ${remainingSec}s",
+                                text = if (engineState.isCrossfading) "CROSSFADING NOW" else "Transition in ${remainingSec}s",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.primary,
+                                color = if (engineState.isCrossfading) WarmOrange else MaterialTheme.colorScheme.primary,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
@@ -483,7 +569,10 @@ fun DjDeckScreen(
                         val score = if (activeTrack != null) {
                             com.example.util.SmartPlaylistOptimizer.calculateCompatibilityScore(activeTrack, next)
                         } else 1.0f
-                        val transitionType = com.example.data.model.selectTransitionType(score)
+                        val transitionDecision = if (activeTrack != null) {
+                            com.example.util.SmartPlaylistOptimizer.createTransitionDecision(activeTrack, next)
+                        } else null
+                        val transitionType = transitionDecision?.type ?: com.example.data.model.selectTransitionType(score)
 
                         Surface(
                             color = when {
@@ -677,7 +766,7 @@ fun DjDeckScreen(
                                     )
                                     Spacer(modifier = Modifier.width(4.dp))
                                     Text(
-                                        text = if (isQueueOptimized) "⚡ Reordered" else "Reorder Flow",
+                                        text = if (isQueueOptimized) "⚡ Reordered Arc" else "Reorder Flow",
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.Bold
@@ -718,7 +807,10 @@ fun DjDeckScreen(
                                 val score = if (activeTrack != null) {
                                     com.example.util.SmartPlaylistOptimizer.calculateCompatibilityScore(activeTrack, track)
                                 } else 1.0f
-                                val transitionType = com.example.data.model.selectTransitionType(score)
+                                val decision = if (activeTrack != null) {
+                                    com.example.util.SmartPlaylistOptimizer.createTransitionDecision(activeTrack, track)
+                                } else null
+                                val transitionType = decision?.type ?: com.example.data.model.selectTransitionType(score)
 
                                 Card(
                                     modifier = Modifier

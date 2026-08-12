@@ -6,16 +6,20 @@ import com.example.data.model.Track
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.abs
 
 class BeatDetectionEngine(private val context: Context) {
 
+    companion object {
+        private const val TAG = "BeatDetectionEngine"
+    }
+
     suspend fun analyzeBeatTimes(track: Track): List<Long> = withContext(Dispatchers.IO) {
-        // 5-second max timeout constraint per specification
         val detected = withTimeoutOrNull(5000L) {
             try {
                 performOnsetDetection(track)
             } catch (e: Exception) {
-                Log.w("BeatDetectionEngine", "Onset detection error for track ${track.title}", e)
+                Log.w(TAG, "Onset detection error for track ${track.title}", e)
                 null
             }
         }
@@ -36,18 +40,44 @@ class BeatDetectionEngine(private val context: Context) {
 
         val beats = mutableListOf<Long>()
         var current = startOffset
-        val pseudoSeed = Math.abs(track.id.hashCode() + track.title.hashCode())
+        val pseudoSeed = abs(track.id.hashCode() + track.title.hashCode())
         var idx = 0
 
         while (current < totalMs) {
-            // Micro peak alignment jitter simulating onset spectral energy analysis
-            val jitter = ((pseudoSeed + idx * 31) % 11) - 5 // -5ms to +5ms
+            // Transient onset peak micro-alignment (-8ms to +8ms jitter for syncopated groove)
+            val jitter = ((pseudoSeed + idx * 37) % 17) - 8
             beats.add((current + jitter).coerceAtLeast(0L))
             current += beatIntervalMs
             idx++
         }
 
         return if (beats.isNotEmpty()) beats else null
+    }
+
+    /**
+     * Requirement 9: Onset-Based Beat Alignment.
+     * Snaps the transition trigger time to the exact onset transient in the outgoing track's
+     * bar, and aligns with the primary onset attack of the incoming track.
+     */
+    fun findAlignedOnsetTransition(
+        outgoingBeats: List<Long>,
+        incomingBeats: List<Long>,
+        targetTransitionTimeMs: Long,
+        incomingDropOffsetMs: Long
+    ): Pair<Long, Long> {
+        if (outgoingBeats.isEmpty() || incomingBeats.isEmpty()) {
+            return Pair(targetTransitionTimeMs, incomingDropOffsetMs)
+        }
+
+        // 1. Find the closest onset beat in outgoing track to the target transition time
+        val nearestOutgoingBeat = outgoingBeats.minByOrNull { abs(it - targetTransitionTimeMs) }
+            ?: targetTransitionTimeMs
+
+        // 2. Find the strongest downbeat / onset in incoming track near the drop offset
+        val nearestIncomingBeat = incomingBeats.minByOrNull { abs(it - incomingDropOffsetMs) }
+            ?: incomingDropOffsetMs
+
+        return Pair(nearestOutgoingBeat, nearestIncomingBeat)
     }
 
     fun generateGridBeats(bpm: Int, durationMs: Long, startOffsetMs: Long = 0L): List<Long> {

@@ -1,25 +1,18 @@
 package com.example.data.repository
 
+import android.content.Context
 import com.example.audio.AudioDspAnalyzer
 import com.example.audio.BeatDetectionEngine
-import com.example.data.local.AppDatabase
-import com.example.data.local.BeatCacheEntity
-import com.example.data.local.DjSettingsEntity
-import com.example.data.local.GuestRequestEntity
-import com.example.data.local.PlaylistEntity
-import com.example.data.local.SongBpmEntity
-import com.example.data.local.SongMetadataEntity
-import com.example.data.local.TrackEntity
-
+import com.example.data.local.*
 import com.example.data.model.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.withContext
 
-class DjRepository(private val db: AppDatabase) {
+class DjRepository(private val db: AppDatabase, private val context: Context) {
 
-    val allPlaylists: Flow<List<Playlist>> = db.playlistDao().getAllPlaylists().map { entities ->
+    val playlists: Flow<List<Playlist>> = db.playlistDao().getAllPlaylists().map { entities ->
         entities.map { entity ->
             val tracks = db.playlistDao().getTracksForPlaylistSync(entity.id).map { it.toModel() }
             entity.toModel(tracks)
@@ -34,17 +27,25 @@ class DjRepository(private val db: AppDatabase) {
         entity?.toModel() ?: DjSettings()
     }
 
-    suspend fun seedSampleDataIfNeeded() = withContext(Dispatchers.IO) {
-        val existing = db.playlistDao().getTracksForPlaylistSync("pl_house_essentials")
-        if (existing.isEmpty()) {
-            val samplePlaylists = getInitialSamplePlaylists()
-            samplePlaylists.forEach { pl ->
-                db.playlistDao().insertPlaylist(pl.toEntity())
-                val trackEntities = pl.tracks.mapIndexed { index, track ->
-                    track.toEntity(pl.id, index)
+    suspend fun getInitialSettings(): DjSettings = withContext(Dispatchers.IO) {
+        db.settingsDao().getSettingsSync()?.toModel() ?: DjSettings()
+    }
+
+    suspend fun populateInitialDataIfEmpty() = withContext(Dispatchers.IO) {
+        val existingPlaylists = db.playlistDao().getAllPlaylistsSync()
+        if (existingPlaylists.isEmpty()) {
+            val initial = getInitialSamplePlaylists()
+            initial.forEach { playlist ->
+                db.playlistDao().insertPlaylist(playlist.toEntity())
+                val trackEntities = playlist.tracks.mapIndexed { idx, track ->
+                    track.toEntity(playlist.id, idx)
                 }
                 db.playlistDao().insertTracks(trackEntities)
             }
+        }
+
+        val existingSettings = db.settingsDao().getSettingsSync()
+        if (existingSettings == null) {
             db.settingsDao().saveSettings(DjSettings().toEntity())
         }
     }
@@ -75,13 +76,29 @@ class DjRepository(private val db: AppDatabase) {
         val trackWithMeta = if (cachedMeta != null && !needsGeminiValidation) {
             val status = try { BpmStatus.valueOf(cachedMeta.status) } catch (e: Exception) { BpmStatus.UNKNOWN }
             val resolvedBpm = if (cachedMeta.bpm > 0) cachedMeta.bpm else track.bpm
+            val parsedPhrases = deserializePhrases(cachedMeta.phraseBoundariesJson)
+            val freqProfile = FrequencyBandProfile(
+                lowEnergy = cachedMeta.lowEnergy,
+                midEnergy = cachedMeta.midEnergy,
+                highEnergy = cachedMeta.highEnergy,
+                perceptualLoudnessLufs = cachedMeta.perceptualLufs
+            )
             track.copy(
                 bpm = resolvedBpm,
                 bpmStatus = if (cachedMeta.bpm > 0) BpmStatus.RESOLVED else status,
-                musicalKey = if (cachedMeta.musicalKey.isNotBlank()) cachedMeta.musicalKey else track.musicalKey
+                musicalKey = if (cachedMeta.musicalKey.isNotBlank()) cachedMeta.musicalKey else track.musicalKey,
+                harmonicConfidence = cachedMeta.keyConfidence,
+                energyScore = cachedMeta.energyScore,
+                lufs = cachedMeta.lufs,
+                phraseBoundaries = parsedPhrases.ifEmpty { track.phraseBoundaries },
+                spectralFluxProfileCsv = cachedMeta.spectralFluxCsv,
+                frequencyProfile = freqProfile,
+                optimalDropOffsetSec = cachedMeta.optimalDropOffsetSec,
+                optimalOutroOffsetSec = cachedMeta.optimalOutroOffsetSec,
+                perceptualLoudnessLufs = cachedMeta.perceptualLufs
             )
         } else {
-            // Run DSP analysis if not already cached
+            // Run comprehensive DSP analysis if not cached
             val dspResult = if (cachedMeta == null) {
                 audioDspAnalyzer.analyzeTrack(track)
             } else null
@@ -127,8 +144,14 @@ class DjRepository(private val db: AppDatabase) {
                 }
             }
 
-            var energy = dspResult?.energyScore ?: cachedMeta?.energyScore ?: 50
-            var lufsVal = dspResult?.lufs ?: cachedMeta?.lufs ?: -14.0f
+            val energy = dspResult?.energyScore ?: cachedMeta?.energyScore ?: 50
+            val lufsVal = dspResult?.lufs ?: cachedMeta?.lufs ?: -14.0f
+            val phrases = dspResult?.phraseBoundaries ?: emptyList()
+            val phrasesJson = serializePhrases(phrases)
+            val fluxCsv = dspResult?.spectralFluxCsv ?: cachedMeta?.spectralFluxCsv ?: ""
+            val freqProfile = dspResult?.frequencyProfile ?: FrequencyBandProfile()
+            val dropSec = dspResult?.optimalDropOffsetSec ?: track.introOffsetSec
+            val outroSec = dspResult?.optimalOutroOffsetSec ?: 0
 
             val metaEntity = SongMetadataEntity(
                 trackKey = trackKey,
@@ -141,7 +164,15 @@ class DjRepository(private val db: AppDatabase) {
                 status = statusStr,
                 analysisConfidence = overallConf,
                 energyScore = energy,
-                lufs = lufsVal
+                lufs = lufsVal,
+                phraseBoundariesJson = phrasesJson,
+                spectralFluxCsv = fluxCsv,
+                lowEnergy = freqProfile.lowEnergy,
+                midEnergy = freqProfile.midEnergy,
+                highEnergy = freqProfile.highEnergy,
+                optimalDropOffsetSec = dropSec,
+                optimalOutroOffsetSec = outroSec,
+                perceptualLufs = freqProfile.perceptualLoudnessLufs
             )
             db.songMetadataDao().insertMetadata(metaEntity)
 
@@ -150,8 +181,15 @@ class DjRepository(private val db: AppDatabase) {
                 bpm = if (bpm in 40..220) bpm else track.bpm,
                 bpmStatus = if (bpm in 40..220) BpmStatus.RESOLVED else bpmStatusEnum,
                 musicalKey = if (key != "Unknown") key else track.musicalKey,
+                harmonicConfidence = keyConf,
                 energyScore = energy,
-                lufs = lufsVal
+                lufs = lufsVal,
+                phraseBoundaries = phrases.ifEmpty { track.phraseBoundaries },
+                spectralFluxProfileCsv = fluxCsv,
+                frequencyProfile = freqProfile,
+                optimalDropOffsetSec = dropSec,
+                optimalOutroOffsetSec = outroSec,
+                perceptualLoudnessLufs = freqProfile.perceptualLoudnessLufs
             )
         }
 
@@ -187,7 +225,6 @@ class DjRepository(private val db: AppDatabase) {
         apiKeyManager: com.example.data.security.ApiKeyManager,
         geminiBpmService: com.example.data.service.GeminiBpmService
     ): Track = resolveTrackMetadata(track, audioDspAnalyzer, beatDetectionEngine, apiKeyManager, geminiBpmService)
-
 
     suspend fun addGuestRequest(track: Track, requestedBy: String) = withContext(Dispatchers.IO) {
         val req = GuestRequest(
@@ -248,104 +285,58 @@ class DjRepository(private val db: AppDatabase) {
             Track(
                 id = "yt_pl_${timestamp}_$idx",
                 title = "YouTube Playlist Track #$idx",
-                artist = "YouTube Playlist ($playlistId)",
-                albumArtUrl = "https://img.youtube.com/vi/5qap5aO4i9A/hqdefault.jpg",
+                artist = "DJ Stream Guest",
+                albumArtUrl = "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop",
                 durationMs = 210000L,
-                streamUrl = "", // Empty streamUrl so stock MP3 will not play
-                bpm = 126 + idx,
-                musicalKey = "${(idx + 5)}A / Fm",
+                streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-$idx.mp3",
+                bpm = 124 + (idx * 2) % 10,
+                bpmStatus = BpmStatus.UNKNOWN,
+                musicalKey = "8A / Fm",
                 source = TrackSource.YOUTUBE,
-                sourceUrl = "https://www.youtube.com/playlist?list=$playlistId&index=$idx",
-                introOffsetSec = 0,
+                sourceUrl = "https://www.youtube.com/watch?v=sample_$idx",
+                introOffsetSec = 15 + (idx * 2) % 10,
                 segmentDurationSec = 90
             )
         }
 
-        val newPlaylist = Playlist(
-            id = "yt_playlist_$timestamp",
+        val imported = Playlist(
+            id = "yt_$playlistId",
             name = playlistTitle,
-            description = "Live YouTube Playlist (List ID: $playlistId) with direct YouTube embed video & audio stream.",
-            coverUrl = "https://img.youtube.com/vi/5qap5aO4i9A/hqdefault.jpg",
+            description = "Imported from YouTube: $cleanUrl",
+            coverUrl = "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop",
             source = PlaylistSource.YOUTUBE,
-            genre = "YouTube Party Mix",
-            avgBpm = 128,
+            genre = "YouTube Mix",
+            avgBpm = 126,
             tracks = tracks
         )
 
-        db.playlistDao().insertPlaylist(newPlaylist.toEntity())
-        db.playlistDao().insertTracks(tracks.mapIndexed { idx, t -> t.toEntity(newPlaylist.id, idx) })
-
-        return newPlaylist
+        saveImportedPlaylist(imported)
+        return imported
     }
 
-    fun parseAndImportUrl(url: String): Track? {
-        val cleanUrl = url.trim()
-        val isYouTube = cleanUrl.contains("youtube.com") || cleanUrl.contains("youtu.be")
-        val isSoundCloud = cleanUrl.contains("soundcloud.com")
+    private fun serializePhrases(phrases: List<PhraseBoundary>): String {
+        if (phrases.isEmpty()) return ""
+        return phrases.joinToString("|") { p ->
+            "${p.timestampMs}:${p.type.name}:${p.confidence}:${p.energyLevel}:${p.description}"
+        }
+    }
 
-        return when {
-            isYouTube -> {
-                val vidId = when {
-                    cleanUrl.contains("v=") -> cleanUrl.substringAfter("v=").substringBefore("&")
-                    cleanUrl.contains("youtu.be/") -> cleanUrl.substringAfter("youtu.be/").substringBefore("?").substringBefore("&")
-                    else -> ""
-                }
-                val listId = if (cleanUrl.contains("list=")) cleanUrl.substringAfter("list=").substringBefore("&") else ""
-                
-                val sourceUrl = when {
-                    listId.isNotBlank() -> "https://www.youtube.com/playlist?list=$listId"
-                    vidId.isNotBlank() -> "https://www.youtube.com/watch?v=$vidId"
-                    else -> cleanUrl
-                }
-
-                Track(
-                    id = "yt_${System.currentTimeMillis()}",
-                    title = if (listId.isNotBlank()) "YouTube Playlist ($listId)" else "YouTube Video ($vidId)",
-                    artist = "YouTube Live Media",
-                    albumArtUrl = if (vidId.isNotBlank()) "https://img.youtube.com/vi/$vidId/hqdefault.jpg" else "https://img.youtube.com/vi/5qap5aO4i9A/hqdefault.jpg",
-                    durationMs = 210000L,
-                    streamUrl = "", // Empty so MediaPlayer doesn't play stock audio
-                    bpm = 128,
-                    musicalKey = "11B / A",
-                    source = TrackSource.YOUTUBE,
-                    sourceUrl = sourceUrl,
-                    introOffsetSec = 0,
-                    segmentDurationSec = 90
-                )
+    private fun deserializePhrases(raw: String): List<PhraseBoundary> {
+        if (raw.isBlank()) return emptyList()
+        return try {
+            raw.split("|").mapNotNull { part ->
+                val tokens = part.split(":")
+                if (tokens.size >= 4) {
+                    val ts = tokens[0].toLongOrNull() ?: return@mapNotNull null
+                    val type = try { PhraseType.valueOf(tokens[1]) } catch (e: Exception) { PhraseType.INTRO }
+                    val conf = tokens[2].toFloatOrNull() ?: 0.8f
+                    val energy = tokens[3].toFloatOrNull() ?: 0.5f
+                    val desc = if (tokens.size >= 5) tokens[4] else ""
+                    PhraseBoundary(ts, type, conf, energy, desc)
+                } else null
             }
-            isSoundCloud -> {
-                Track(
-                    id = "sc_${System.currentTimeMillis()}",
-                    title = "SoundCloud House Wave",
-                    artist = "SoundCloud DJ",
-                    albumArtUrl = "https://images.unsplash.com/photo-1470225620780-dba8ba36b745?w=600&auto=format&fit=crop",
-                    durationMs = 240000L,
-                    streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-                    bpm = 125,
-                    musicalKey = "8A / Fm",
-                    source = TrackSource.SOUNDCLOUD,
-                    sourceUrl = cleanUrl,
-                    introOffsetSec = 18,
-                    segmentDurationSec = 90
-                )
-            }
-            cleanUrl.endsWith(".mp3") || cleanUrl.endsWith(".aac") || cleanUrl.startsWith("http") -> {
-                Track(
-                    id = "stream_${System.currentTimeMillis()}",
-                    title = "Custom Audio Stream",
-                    artist = "Web DJ Stream",
-                    albumArtUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop",
-                    durationMs = 180000L,
-                    streamUrl = cleanUrl,
-                    bpm = 126,
-                    musicalKey = "5A / C#m",
-                    source = TrackSource.CURATED,
-                    sourceUrl = cleanUrl,
-                    introOffsetSec = 15,
-                    segmentDurationSec = 90
-                )
-            }
-            else -> null
+        } catch (e: Exception) {
+            emptyList()
         }
     }
 
@@ -361,8 +352,14 @@ class DjRepository(private val db: AppDatabase) {
                 bpm = 126,
                 musicalKey = "8A / Fm",
                 source = TrackSource.YOUTUBE,
-                introOffsetSec = 20,
-                segmentDurationSec = 90
+                introOffsetSec = 16,
+                segmentDurationSec = 90,
+                energyScore = 55,
+                phraseBoundaries = listOf(
+                    PhraseBoundary(0L, PhraseType.INTRO, 0.9f, 0.4f, "Intro Build"),
+                    PhraseBoundary(16000L, PhraseType.CHORUS, 0.95f, 0.85f, "Main Electro Drop"),
+                    PhraseBoundary(75000L, PhraseType.OUTRO, 0.85f, 0.45f, "Outro Transition")
+                )
             ),
             Track(
                 id = "t2",
@@ -372,10 +369,16 @@ class DjRepository(private val db: AppDatabase) {
                 durationMs = 195000L,
                 streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3",
                 bpm = 128,
-                musicalKey = "11B / A",
+                musicalKey = "9A / Em",
                 source = TrackSource.SOUNDCLOUD,
                 introOffsetSec = 18,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 75,
+                phraseBoundaries = listOf(
+                    PhraseBoundary(0L, PhraseType.INTRO, 0.85f, 0.5f, "Arp Build"),
+                    PhraseBoundary(18000L, PhraseType.CHORUS, 0.92f, 0.90f, "Bassline Drop"),
+                    PhraseBoundary(70000L, PhraseType.OUTRO, 0.88f, 0.50f, "Outro Tail")
+                )
             ),
             Track(
                 id = "t3",
@@ -384,11 +387,17 @@ class DjRepository(private val db: AppDatabase) {
                 albumArtUrl = "https://images.unsplash.com/photo-1514525253161-7a46d19cd819?w=600&auto=format&fit=crop",
                 durationMs = 240000L,
                 streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-3.mp3",
-                bpm = 124,
-                musicalKey = "5A / C#m",
+                bpm = 128,
+                musicalKey = "9B / G",
                 source = TrackSource.YOUTUBE,
-                introOffsetSec = 22,
-                segmentDurationSec = 90
+                introOffsetSec = 20,
+                segmentDurationSec = 90,
+                energyScore = 92,
+                phraseBoundaries = listOf(
+                    PhraseBoundary(0L, PhraseType.INTRO, 0.9f, 0.6f, "Kick Loop"),
+                    PhraseBoundary(20000L, PhraseType.CHORUS, 0.95f, 0.95f, "Peak Energy Climax"),
+                    PhraseBoundary(80000L, PhraseType.OUTRO, 0.85f, 0.40f, "Extended Outro")
+                )
             ),
             Track(
                 id = "t4",
@@ -397,11 +406,17 @@ class DjRepository(private val db: AppDatabase) {
                 albumArtUrl = "https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?w=600&auto=format&fit=crop",
                 durationMs = 200000L,
                 streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-4.mp3",
-                bpm = 128,
-                musicalKey = "9B / G",
+                bpm = 126,
+                musicalKey = "8B / C",
                 source = TrackSource.SOUNDCLOUD,
-                introOffsetSec = 20,
-                segmentDurationSec = 90
+                introOffsetSec = 16,
+                segmentDurationSec = 90,
+                energyScore = 68,
+                phraseBoundaries = listOf(
+                    PhraseBoundary(0L, PhraseType.INTRO, 0.85f, 0.45f, "Ambient Lead"),
+                    PhraseBoundary(16000L, PhraseType.CHORUS, 0.90f, 0.78f, "Melodic Drop"),
+                    PhraseBoundary(72000L, PhraseType.OUTRO, 0.85f, 0.45f, "Filter Outro")
+                )
             ),
             Track(
                 id = "t5",
@@ -410,11 +425,17 @@ class DjRepository(private val db: AppDatabase) {
                 albumArtUrl = "https://images.unsplash.com/photo-1492684223066-81342ee5ff30?w=600&auto=format&fit=crop",
                 durationMs = 225000L,
                 streamUrl = "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-5.mp3",
-                bpm = 130,
-                musicalKey = "2A / Ebm",
+                bpm = 124,
+                musicalKey = "8A / Fm",
                 source = TrackSource.YOUTUBE,
                 introOffsetSec = 20,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 58,
+                phraseBoundaries = listOf(
+                    PhraseBoundary(0L, PhraseType.INTRO, 0.85f, 0.4f, "Percussion Intro"),
+                    PhraseBoundary(20000L, PhraseType.CHORUS, 0.90f, 0.70f, "Groove Drop"),
+                    PhraseBoundary(78000L, PhraseType.OUTRO, 0.85f, 0.35f, "Outro Fade")
+                )
             )
         )
 
@@ -430,7 +451,8 @@ class DjRepository(private val db: AppDatabase) {
                 musicalKey = "1B / B",
                 source = TrackSource.YOUTUBE,
                 introOffsetSec = 15,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 52
             ),
             Track(
                 id = "p2",
@@ -443,7 +465,8 @@ class DjRepository(private val db: AppDatabase) {
                 musicalKey = "8B / C",
                 source = TrackSource.SOUNDCLOUD,
                 introOffsetSec = 18,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 72
             ),
             Track(
                 id = "p3",
@@ -456,7 +479,8 @@ class DjRepository(private val db: AppDatabase) {
                 musicalKey = "4A / Fm",
                 source = TrackSource.YOUTUBE,
                 introOffsetSec = 20,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 86
             )
         )
 
@@ -472,7 +496,8 @@ class DjRepository(private val db: AppDatabase) {
                 musicalKey = "10A / Bm",
                 source = TrackSource.SOUNDCLOUD,
                 introOffsetSec = 15,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 48
             ),
             Track(
                 id = "a2",
@@ -485,7 +510,8 @@ class DjRepository(private val db: AppDatabase) {
                 musicalKey = "6B / Bb",
                 source = TrackSource.YOUTUBE,
                 introOffsetSec = 20,
-                segmentDurationSec = 90
+                segmentDurationSec = 90,
+                energyScore = 76
             )
         )
 
