@@ -215,6 +215,14 @@ object CamelotWheel {
         return bestShift
     }
 
+    /**
+     * Alias returning Int? for test compatibility (Requirement 10).
+     */
+    fun getOptimalPitchShiftSemitones(key1Str: String?, key2Str: String?): Int? {
+        val shift = calculateOptimalPitchShift(key1Str, key2Str)
+        return if (shift != 0) shift else null
+    }
+
     fun getSmoothnessInfo(score: Float): SmoothnessInfo {
         return when {
             score >= 0.8f -> SmoothnessInfo("Harmonic Blend", score, "⚡ Beat-Synced Harmonic Blend")

@@ -141,4 +141,60 @@ class DspTransitionUnitTest {
         assertEquals("Warmup should remain starting track", "2", optimized.first().id)
         assertEquals("All tracks must be preserved without loss", 5, optimized.size)
     }
+
+    @Test
+    fun testPhraseBoundaryDetectionAndSegmentation() {
+        val phrases = listOf(
+            PhraseBoundary(0L, PhraseType.INTRO, 0.9f, 0.3f, "Intro"),
+            PhraseBoundary(15000L, PhraseType.BUILD, 0.8f, 0.6f, "Build-Up"),
+            PhraseBoundary(30000L, PhraseType.CHORUS, 0.95f, 0.9f, "Main Drop"),
+            PhraseBoundary(75000L, PhraseType.OUTRO, 0.85f, 0.35f, "Outro")
+        )
+
+        val track = Track(
+            id = "phrase_test",
+            title = "Phrase Test Track",
+            artist = "Artist",
+            durationMs = 90000L,
+            phraseBoundaries = phrases
+        )
+
+        val intro = track.phraseBoundaries.firstOrNull { it.type == PhraseType.INTRO }
+        assertNotNull(intro)
+        assertEquals("0:00", intro?.formattedTime)
+
+        val drop = track.phraseBoundaries.firstOrNull { it.type == PhraseType.CHORUS }
+        assertNotNull(drop)
+        assertEquals("0:30", drop?.formattedTime)
+    }
+
+    @Test
+    fun testSpectralFluxCorrelation() {
+        val v1 = floatArrayOf(0.1f, 0.4f, 0.7f, 0.9f, 0.5f, 0.2f)
+        val v2Same = floatArrayOf(0.1f, 0.4f, 0.7f, 0.9f, 0.5f, 0.2f)
+        val v3Inverse = floatArrayOf(0.9f, 0.6f, 0.3f, 0.1f, 0.5f, 0.8f)
+
+        val corrSelf = com.example.audio.AudioDspAnalyzer.calculateSpectralFluxCorrelation(v1, v2Same)
+        val corrInv = com.example.audio.AudioDspAnalyzer.calculateSpectralFluxCorrelation(v1, v3Inverse)
+
+        assertTrue("Identical flux vectors must yield high correlation score (~1.0)", corrSelf > 0.90f)
+        assertTrue("Inverted flux vectors must yield lower correlation score", corrInv < corrSelf)
+    }
+
+    @Test
+    fun testOnsetBasedBeatAlignment() {
+        val engine = com.example.audio.BeatDetectionEngine(null)
+        val outgoingBeats = listOf(0L, 500L, 1000L, 1500L, 2000L, 2500L)
+        val incomingBeats = listOf(0L, 480L, 960L, 1440L, 1920L)
+
+        val (outBeat, inBeat) = engine.findAlignedOnsetTransition(
+            outgoingBeats = outgoingBeats,
+            incomingBeats = incomingBeats,
+            targetTransitionTimeMs = 1020L,
+            incomingDropOffsetMs = 950L
+        )
+
+        assertEquals("Should align to closest outgoing beat 1000ms", 1000L, outBeat)
+        assertEquals("Should align to closest incoming beat 960ms", 960L, inBeat)
+    }
 }
