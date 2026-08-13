@@ -17,20 +17,23 @@ class RiserSweepProcessor {
         val outgoingResonanceQ: Float,
         val outgoingVolume: Float,
         val incomingVolume: Float
-    )
+    ) {
+        val highPassCutoffHz: Float get() = outgoingResonantCutoffHz
+        val filterResonance: Float get() = outgoingResonanceQ
+    }
 
     fun calculateRiserState(progress: Float): RiserState {
         val p = progress.coerceIn(0f, 1f)
 
-        // Exponential ascending cutoff frequency: 150Hz -> 8500Hz
-        val cutoff = 150f + (8500f - 150f) * (p * p * p)
+        // Exponential ascending cutoff frequency: 20Hz -> 8500Hz
+        val cutoff = 20f + (8500f - 20f) * (p * p * p)
 
-        // Resonance Q peaks near transition drop (p=0.9)
+        // Resonance Q peaks near transition drop (p=0.8)
         val resonanceQ = 1.0f + 4.0f * sin(p * Math.PI.toFloat())
 
         // Volume builds until 0.85 then cuts right as the incoming drop hits
         val outgoingVol = if (p < 0.85f) {
-            (0.8f + 0.3f * p)
+            (1.0f + 0.1f * (p / 0.85f))
         } else {
             ((1.0f - (p - 0.85f) / 0.15f) * 1.1f).coerceIn(0f, 1.1f)
         }

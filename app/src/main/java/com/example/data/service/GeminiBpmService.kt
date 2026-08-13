@@ -26,12 +26,20 @@ class GeminiBpmService(
 
     private val modelCandidates = listOf(
         "gemini-3.1-flash-lite",
-        "gemini-2.5-flash-lite",
-        "gemini-1.5-flash-lite",
-        "gemini-2.0-flash-lite",
-        "gemini-2.5-flash",
+        "gemini-2.0-flash-lite-preview-02-05",
+        "gemini-2.0-flash",
         "gemini-1.5-flash"
     )
+
+    private fun formatSongQuery(title: String, artist: String): String {
+        val cleanArtist = artist.trim()
+        val cleanTitle = title.trim()
+        return if (cleanArtist.isNotBlank() && cleanArtist != "Custom Track" && cleanArtist != "Unknown" && cleanArtist != "Unknown Artist") {
+            "the song '$cleanTitle' by '$cleanArtist'"
+        } else {
+            "the song '$cleanTitle'"
+        }
+    }
 
     suspend fun validateLowConfidenceMetadata(
         title: String,
@@ -47,7 +55,8 @@ class GeminiBpmService(
             return@withContext SongMetadataResult(dspBpm, dspKey, "")
         }
 
-        val promptText = "I analyzed the song '$title' by '$artist' and detected BPM ~$dspBpm (confidence $bpmConfidence%) and key ~$dspKey (confidence $keyConfidence%), but I'm not confident. Based on what you know, what are the actual BPM and musical key? Respond with: BPM: [number], Key: [key name]."
+        val songTarget = formatSongQuery(title, artist)
+        val promptText = "I analyzed $songTarget and detected BPM ~$dspBpm (confidence $bpmConfidence%) and key ~$dspKey (confidence $keyConfidence%), but I need verified values. What are the actual official BPM and musical key? Respond with: BPM: [number], Key: [key name]."
 
         val jsonBody = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -113,7 +122,8 @@ class GeminiBpmService(
             return@withContext SongMetadataResult(null, "Unknown", "")
         }
 
-        val promptText = "What is the musical key and BPM of the song '$title' by '$artist'? Respond with only the key (e.g., C major, G minor) and the BPM number separated by a comma."
+        val songTarget = formatSongQuery(title, artist)
+        val promptText = "What is the musical key and BPM of $songTarget? Respond with only the key (e.g., C major, G minor) and the BPM number separated by a comma."
 
         val jsonBody = JSONObject().apply {
             put("contents", JSONArray().apply {
@@ -204,7 +214,8 @@ class GeminiBpmService(
             return@withContext null
         }
 
-        val promptText = "What is the BPM (beats per minute) of the song '$title' by '$artist'? Respond with only the number."
+        val songTarget = formatSongQuery(title, artist)
+        val promptText = "What is the BPM (beats per minute) of $songTarget? Respond with only the number."
 
         val jsonBody = JSONObject().apply {
             val contentsArray = JSONArray().apply {

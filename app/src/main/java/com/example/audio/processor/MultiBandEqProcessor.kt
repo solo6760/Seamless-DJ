@@ -41,18 +41,18 @@ class MultiBandEqProcessor {
         val inMaster = sin(p * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
 
         // 1. Low-Band (Bass) Swap Automation:
-        // Outgoing bass drops early (by 50% progress it's down to -18dB = 0.12)
-        // Incoming bass stays suppressed until 40% progress, then ramps up swiftly to 1.0
+        // Outgoing bass starts at 1.0f and drops to 0.0f
+        // Incoming bass starts at 0.0f and ramps up to 1.0f
         val outLow = if (p < 0.6f) {
-            (1.0f - (p / 0.6f) * 0.88f).coerceIn(0.12f, 1.0f)
+            (1.0f - (p / 0.6f) * 0.75f).coerceIn(0.0f, 1.0f)
         } else {
-            (0.12f * (1.0f - (p - 0.6f) / 0.4f)).coerceIn(0.0f, 0.12f)
+            (0.25f * (1.0f - (p - 0.6f) / 0.4f)).coerceIn(0.0f, 1.0f)
         }
 
         val inLow = if (p < 0.4f) {
-            0.10f
+            (p / 0.4f) * 0.15f
         } else {
-            (0.10f + ((p - 0.4f) / 0.6f) * 0.90f).coerceIn(0.10f, 1.0f)
+            (0.15f + ((p - 0.4f) / 0.6f) * 0.85f).coerceIn(0.0f, 1.0f)
         }
 
         // 2. Mid-Band Automation (Vocal / Harmonic Isolation):

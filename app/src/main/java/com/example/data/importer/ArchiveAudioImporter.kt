@@ -5,6 +5,7 @@ import android.media.MediaMetadataRetriever
 import android.net.Uri
 import android.provider.DocumentsContract
 import android.provider.OpenableColumns
+import com.example.data.model.BpmStatus
 import com.example.data.model.Playlist
 import com.example.data.model.PlaylistSource
 import com.example.data.model.Track
@@ -271,10 +272,10 @@ object ArchiveAudioImporter {
             try {
                 retriever.setDataSource(file.absolutePath)
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_TITLE)?.let {
-                    if (it.isNotBlank()) title = it
+                    if (it.isNotBlank()) title = it.trim()
                 }
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_ARTIST)?.let {
-                    if (it.isNotBlank()) artist = it
+                    if (it.isNotBlank()) artist = it.trim()
                 }
                 retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.let {
                     if (it > 0) durationMs = it
@@ -291,6 +292,28 @@ object ArchiveAudioImporter {
                 retriever.release()
             }
 
+            // If artist was not found in ID3 tag, parse common filename patterns: "Artist - Title" or "01 - Artist - Title"
+            if (artist == "Custom Track" || artist.isBlank()) {
+                val rawName = file.nameWithoutExtension
+                val splitParts = if (rawName.contains(" - ")) {
+                    rawName.split(" - ")
+                } else if (rawName.contains("_-_")) {
+                    rawName.split("_-_")
+                } else null
+
+                if (splitParts != null && splitParts.size >= 2) {
+                    val cleanParts = splitParts.map { it.trim().replace("_", " ") }
+                    if (cleanParts.size == 2) {
+                        artist = cleanParts[0]
+                        title = cleanParts[1]
+                    } else if (cleanParts.size >= 3) {
+                        // e.g. "01 - Artist - Title"
+                        artist = cleanParts[1]
+                        title = cleanParts.drop(2).joinToString(" - ")
+                    }
+                }
+            }
+
             Track(
                 id = "tr_local_${System.currentTimeMillis()}_$index",
                 title = title,
@@ -298,8 +321,9 @@ object ArchiveAudioImporter {
                 albumArtUrl = albumArtUrl,
                 durationMs = durationMs,
                 streamUrl = file.absolutePath,
-                bpm = 124 + (index % 8),
-                musicalKey = "${(index % 12) + 1}A",
+                bpm = 124,
+                bpmStatus = BpmStatus.UNKNOWN,
+                musicalKey = "Unknown",
                 source = TrackSource.LOCAL_FILE,
                 sourceUrl = file.absolutePath,
                 introOffsetSec = 0,

@@ -8,7 +8,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.abs
 
-class BeatDetectionEngine(private val context: Context) {
+class BeatDetectionEngine(private val context: Context? = null) {
 
     companion object {
         private const val TAG = "BeatDetectionEngine"

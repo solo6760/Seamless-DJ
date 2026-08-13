@@ -15,7 +15,7 @@ import androidx.room.RoomDatabase
         SongMetadataEntity::class,
         BeatCacheEntity::class
     ],
-    version = 8,
+    version = 9,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -37,7 +37,10 @@ abstract class AppDatabase : RoomDatabase() {
                     context.applicationContext,
                     AppDatabase::class.java,
                     "seamless_dj_db"
-                ).fallbackToDestructiveMigration().build()
+                )
+                .fallbackToDestructiveMigration(dropAllTables = true)
+                .fallbackToDestructiveMigrationOnDowngrade(dropAllTables = true)
+                .build()
                 INSTANCE = instance
                 instance
             }

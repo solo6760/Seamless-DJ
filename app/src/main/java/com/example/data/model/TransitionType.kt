@@ -37,20 +37,17 @@ fun selectContextualTransition(
     val overallCompat = (0.40f * harmonicScore) + (0.25f * bpmSimilarity) + (0.15f * if (energyDiff < 15) 1.0f else 0.5f) + (0.20f * spectralFluxCorrelation)
 
     return when {
-        // 1. Large energy jump (Low -> High build)
-        isLargeEnergyJump -> TransitionType.RISER_SWEEP
-
-        // 2. Significant key clash or large tempo clash or overall low score -> Echo Out with reverb decay tail
+        // 1. Significant key clash, large tempo clash, or overall incompatible score -> Echo Out
         harmonicScore < 0.40f || bpmDiffRatio > 0.18f || overallCompat < 0.45f -> TransitionType.ECHO_OUT
+
+        // 2. Large energy build (Low -> High energy differential) -> Resonant Riser Sweep
+        isLargeEnergyJump -> TransitionType.RISER_SWEEP
 
         // 3. Significant timbral/spectral difference or medium clash -> Resonant Filter Sweep
         spectralFluxCorrelation < 0.55f || overallCompat < 0.65f -> TransitionType.FILTER_SWEEP
 
-        // 4. Good harmonic compatibility (0.65 to 0.79) -> Multi-Band EQ Fade with aggressive bass swap
-        overallCompat < 0.80f -> TransitionType.EQ_FADE
-
-        // 5. Identical key, BPM, energy (>= 0.80) -> Tight, snappy beat-matched Crossfade
-        else -> TransitionType.CROSSFADE
+        // 4. Compatible tracks with high harmonic and BPM match -> Multi-Band EQ Fade (bass swap)
+        else -> TransitionType.EQ_FADE
     }
 }
 

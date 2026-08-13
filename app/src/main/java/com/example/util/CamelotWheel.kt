@@ -134,8 +134,8 @@ object CamelotWheel {
     fun getCompatibilityScore(
         key1Str: String?,
         key2Str: String?,
-        confidence1: Int = 80,
-        confidence2: Int = 80
+        confidence1: Int = 100,
+        confidence2: Int = 100
     ): Float {
         val code1 = parseKey(key1Str)
         val code2 = parseKey(key2Str)
@@ -150,7 +150,7 @@ object CamelotWheel {
             code1 == code2 -> 1.0f
 
             // Relative Major / Relative Minor (e.g. 8A & 8B)
-            code1.number == code2.number && code1.letter != code2.letter -> 1.0f
+            code1.number == code2.number && code1.letter != code2.letter -> 0.90f
 
             // Circular distance calculation on wheel (1..12)
             else -> {
@@ -158,20 +158,20 @@ object CamelotWheel {
                 val circularDistance = Math.min(diff, 12 - diff)
 
                 when {
-                    // Dominant / Subdominant (Distance 1 on same letter e.g. 8A and 9A or 8A and 7A) -> 0.85
+                    // Adjacent key (+1 / -1 on same wheel e.g. 8A and 9A or 8A and 7A) -> 0.85
                     circularDistance == 1 && code1.letter == code2.letter -> 0.85f
-                    // Diagonal change (Distance 1 with different letter e.g. 8A and 9B) -> 0.65
-                    circularDistance == 1 && code1.letter != code2.letter -> 0.65f
+                    // Diagonal harmonic shift (+1 and relative e.g. 8A and 9B) -> 0.75
+                    circularDistance == 1 && code1.letter != code2.letter -> 0.75f
                     // Energy Boost modulation (Distance 2, same letter e.g. 8A and 10A) -> 0.55
                     circularDistance == 2 && code1.letter == code2.letter -> 0.55f
                     circularDistance == 2 -> 0.45f
-                    // Distance 3+ -> Key clash
+                    // Distance 3+ -> Incompatible / Distant key
                     else -> 0.20f
                 }
             }
         }
 
-        // Scale by confidence (if confidence is low, pull score slightly towards neutral 0.5)
+        // Scale by confidence (if confidence is 100%, returns baseScore exactly)
         val avgConf = ((confidence1 + confidence2) / 2f).coerceIn(10f, 100f) / 100f
         return (baseScore * avgConf + 0.5f * (1.0f - avgConf)).coerceIn(0.1f, 1.0f)
     }
@@ -180,47 +180,32 @@ object CamelotWheel {
      * Requirement 10: Harmonic Pitch Compensation.
      * Calculates the subtle pitch shift (-2..+2 semitones) for incoming track
      * that transforms key2 into a harmonious key with key1.
-     * Returns 0 if already compatible (score >= 0.7f) or if no shift is beneficial.
+     * Returns 0 if already compatible or if no shift is beneficial.
      */
     fun calculateOptimalPitchShift(key1Str: String?, key2Str: String?): Int {
-        val code1 = parseKey(key1Str) ?: return 0
-        val code2 = parseKey(key2Str) ?: return 0
-
-        val currentScore = getCompatibilityScore(key1Str, key2Str)
-        if (currentScore >= 0.70f) return 0 // Already harmonically smooth
-
-        var bestShift = 0
-        var bestScore = currentScore
-
-        // Check ±1 and ±2 semitone shifts
-        val candidates = listOf(1, -1, 2, -2)
-        for (shift in candidates) {
-            // Shifting pitch class by shift semitones alters Camelot number
-            // Each +1 semitone corresponds to +7 steps around circle of fifths (mod 12)
-            val rawNum = (code2.number - 1 + (shift * 7)) % 12
-            val shiftedNum = if (rawNum < 0) rawNum + 12 + 1 else rawNum + 1
-            val shiftedCode = CamelotCode(shiftedNum, code2.letter)
-
-            val testScore = getCompatibilityScore(code1.formatted, shiftedCode.formatted)
-            // Weight candidate: subtle shifts (±1) are preferred over ±2
-            val penalty = if (Math.abs(shift) == 1) 0.05f else 0.15f
-            val netScore = testScore - penalty
-
-            if (netScore > bestScore && testScore >= 0.80f) {
-                bestScore = netScore
-                bestShift = shift
-            }
-        }
-
-        return bestShift
+        val shift = getOptimalPitchShiftSemitones(key1Str, key2Str)
+        return shift ?: 0
     }
 
     /**
      * Alias returning Int? for test compatibility (Requirement 10).
      */
     fun getOptimalPitchShiftSemitones(key1Str: String?, key2Str: String?): Int? {
-        val shift = calculateOptimalPitchShift(key1Str, key2Str)
-        return if (shift != 0) shift else null
+        val code1 = parseKey(key1Str) ?: return null
+        val code2 = parseKey(key2Str) ?: return null
+
+        val diff = code2.number - code1.number
+        val circularDiff = when {
+            diff > 6 -> diff - 12
+            diff < -6 -> diff + 12
+            else -> diff
+        }
+
+        val distance = Math.abs(circularDiff)
+        if (distance == 0 || distance > 2) {
+            return null
+        }
+        return circularDiff
     }
 
     fun getSmoothnessInfo(score: Float): SmoothnessInfo {

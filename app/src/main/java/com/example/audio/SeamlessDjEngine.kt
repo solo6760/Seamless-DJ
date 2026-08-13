@@ -428,18 +428,18 @@ class SeamlessDjEngine(private val context: Context) {
             ================================================================================
         """.trimIndent())
 
-        // 4. Setup incoming player at aligned onset drop point
-        if (incomingDeck == ActiveDeck.DECK_B) {
-            setupPlayerB(incomingTrack, alignedInMs)
-        } else {
-            setupPlayerA(incomingTrack, alignedInMs)
-        }
+        // 4. Setup incoming player at aligned onset drop point (awaiting preparation)
+        val setupSuccess = setupIncomingPlayer(incomingTrack, isDeckA = (incomingDeck == ActiveDeck.DECK_A), startMs = alignedInMs)
+        Log.d("SeamlessDjEngine", "Incoming player on Deck ${if (incomingDeck == ActiveDeck.DECK_A) "A" else "B"} setup success: $setupSuccess")
+
+        val outEq = if (currentActive == ActiveDeck.DECK_A) equalizerA else equalizerB
+        val inEq = if (incomingDeck == ActiveDeck.DECK_B) equalizerB else equalizerA
 
         // Attach Reverb for ECHO_OUT if selected
         if (selectedTransition == TransitionType.ECHO_OUT) {
             val outgoingPlayer = if (currentActive == ActiveDeck.DECK_A) playerA else playerB
             attachReverb(outgoingPlayer, currentActive == ActiveDeck.DECK_A)
-            Log.d("SeamlessDjEngine", "[ECHO_OUT Active] 3.5s Reverb decay tail attached to Deck ${if (currentActive == ActiveDeck.DECK_A) "A" else "B"}")
+            Log.d("SeamlessDjEngine", "[ECHO_OUT Active] 3.5s Reverb decay tail attached with aux send level 1.0 to Deck ${if (currentActive == ActiveDeck.DECK_A) "A" else "B"}")
         }
 
         // Tempo matching & pitch shift (Requirement 10)
@@ -464,9 +464,6 @@ class SeamlessDjEngine(private val context: Context) {
         val steps = 36
         val stepDelay = (fadeDurationMs / steps).coerceAtLeast(35L)
 
-        val outEq = if (currentActive == ActiveDeck.DECK_A) equalizerA else equalizerB
-        val inEq = if (incomingDeck == ActiveDeck.DECK_B) equalizerB else equalizerA
-
         for (i in 0..steps) {
             val progress = i.toFloat() / steps
 
@@ -477,7 +474,7 @@ class SeamlessDjEngine(private val context: Context) {
                     Pair(outV, inV)
                 }
                 TransitionType.EQ_FADE -> {
-                    // Aggressive bass swap: 0dB to -15dB low-shelf crossover
+                    // Aggressive bass swap: 0dB to -18dB low-shelf crossover
                     val eqVolumes = eqFadeProcessor.calculateEqVolumes(progress)
                     applyEqualizerGains(
                         eq = outEq,
@@ -492,8 +489,8 @@ class SeamlessDjEngine(private val context: Context) {
                         highBandGainRatio = 1.0f
                     )
                     Pair(
-                        eqVolumes.outgoingMainVolume * (0.6f * eqVolumes.outgoingBassGain + 0.4f),
-                        eqVolumes.incomingMainVolume * (0.6f * eqVolumes.incomingBassGain + 0.4f)
+                        eqVolumes.outgoingMainVolume * (0.55f * eqVolumes.outgoingBassGain + 0.45f),
+                        eqVolumes.incomingMainVolume * (0.55f * eqVolumes.incomingBassGain + 0.45f)
                     )
                 }
                 TransitionType.FILTER_SWEEP -> {
@@ -509,6 +506,10 @@ class SeamlessDjEngine(private val context: Context) {
                 }
                 TransitionType.ECHO_OUT -> {
                     val echo = echoOutProcessor.calculateEchoState(progress)
+                    val outgoingPlayer = if (currentActive == ActiveDeck.DECK_A) playerA else playerB
+                    try {
+                        outgoingPlayer?.setAuxEffectSendLevel((1.0f - (progress * 0.4f)).coerceIn(0.5f, 1.0f))
+                    } catch (e: Exception) {}
                     Pair(echo.outgoingVolume, echo.incomingVolume)
                 }
             }
@@ -631,16 +632,16 @@ class SeamlessDjEngine(private val context: Context) {
             val minLevel = eq.bandLevelRange?.get(0)?.toInt() ?: -1500
             val maxLevel = eq.bandLevelRange?.get(1)?.toInt() ?: 1500
 
-            // Low Band (Band 0): 0dB down to -1500 mB (-15dB)
+            // Low Band (Band 0): 0dB (0 mB) down to -18dB (-1800 mB or minLevel)
             if (numBands > 0) {
-                val lowDb = (20.0 * kotlin.math.log10(lowBandGainRatio.coerceIn(0.001f, 1.0f).toDouble())).toFloat()
+                val lowDb = (20.0 * kotlin.math.log10(lowBandGainRatio.coerceIn(0.0001f, 1.0f).toDouble())).toFloat()
                 val lowMb = (lowDb * 100).toInt().coerceIn(minLevel, maxLevel).toShort()
                 eq.setBandLevel(0, lowMb)
             }
 
             // Mid Band (Band 1 & 2): 250Hz - 2.5kHz
             if (numBands > 1) {
-                val midDb = (20.0 * kotlin.math.log10(midBandGainRatio.coerceIn(0.001f, 1.0f).toDouble())).toFloat()
+                val midDb = (20.0 * kotlin.math.log10(midBandGainRatio.coerceIn(0.0001f, 1.0f).toDouble())).toFloat()
                 val midMb = (midDb * 100).toInt().coerceIn(minLevel, maxLevel).toShort()
                 eq.setBandLevel(1, midMb)
                 if (numBands > 2) eq.setBandLevel(2, midMb)
@@ -648,7 +649,7 @@ class SeamlessDjEngine(private val context: Context) {
 
             // High Band (Band 3 & 4): > 2.5kHz
             if (numBands > 3) {
-                val highDb = (20.0 * kotlin.math.log10(highBandGainRatio.coerceIn(0.001f, 1.5f).toDouble())).toFloat()
+                val highDb = (20.0 * kotlin.math.log10(highBandGainRatio.coerceIn(0.0001f, 1.5f).toDouble())).toFloat()
                 val highMb = (highDb * 100).toInt().coerceIn(minLevel, maxLevel).toShort()
                 eq.setBandLevel(3, highMb)
                 if (numBands > 4) eq.setBandLevel(4, highMb)
@@ -670,23 +671,29 @@ class SeamlessDjEngine(private val context: Context) {
             val maxLevel = eq.bandLevelRange?.get(1)?.toInt() ?: 1500
 
             if (isOutgoing) {
-                // HPF sweep: progressively cut low, then mid, boost high resonant tone
-                val band0 = (-1500f * (progress / 0.3f).coerceAtMost(1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
-                val band1 = (-1500f * ((progress - 0.2f) / 0.4f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
-                val band2 = (-1200f * ((progress - 0.5f) / 0.4f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
-                val band3 = (+400f * sin(progress * Math.PI.toFloat())).toInt().coerceIn(minLevel, maxLevel).toShort()
+                // Outgoing HPF Sweep: 20Hz -> 4kHz
+                // Cut lows (Band 0) by progress 0.25, cut mids (Band 1 & 2) by 0.50, boost resonant high tone (Band 3)
+                val band0 = (-1800f * (progress / 0.25f).coerceAtMost(1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band1 = (-1800f * ((progress - 0.15f) / 0.35f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band2 = (-1500f * ((progress - 0.35f) / 0.40f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                // High resonant peak boost (~3-5 Q emphasis)
+                val resonanceBoost = (+600f * sin(progress * Math.PI.toFloat())).toInt().coerceIn(minLevel, maxLevel).toShort()
                 if (numBands > 0) eq.setBandLevel(0, band0)
                 if (numBands > 1) eq.setBandLevel(1, band1)
                 if (numBands > 2) eq.setBandLevel(2, band2)
-                if (numBands > 3) eq.setBandLevel(3, band3)
+                if (numBands > 3) eq.setBandLevel(3, resonanceBoost)
+                if (numBands > 4) eq.setBandLevel(4, (resonanceBoost / 2).toShort())
             } else {
-                // LPF sweep: start with lows cut, progressively open bands 2, 1, 0
-                val band0 = (-1500f * (1f - (progress - 0.5f) / 0.5f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
-                val band1 = (-1500f * (1f - (progress - 0.3f) / 0.5f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
-                val band2 = (-1200f * (1f - progress / 0.5f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                // Incoming LPF Sweep: 4kHz -> 20Hz
+                // Start with low/mid frequencies cut, high presence audible, then sweep down opening full spectrum
+                val band0 = (-1800f * (1f - ((progress - 0.45f) / 0.55f)).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band1 = (-1800f * (1f - ((progress - 0.25f) / 0.55f)).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band2 = (-1200f * (1f - (progress / 0.50f)).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val resonanceBoost = (+400f * sin(progress * Math.PI.toFloat())).toInt().coerceIn(minLevel, maxLevel).toShort()
                 if (numBands > 0) eq.setBandLevel(0, band0)
                 if (numBands > 1) eq.setBandLevel(1, band1)
                 if (numBands > 2) eq.setBandLevel(2, band2)
+                if (numBands > 3) eq.setBandLevel(3, resonanceBoost)
             }
         } catch (e: Exception) {
             Log.w("SeamlessDjEngine", "Error applying filter sweep hardware EQ", e)
@@ -712,6 +719,8 @@ class SeamlessDjEngine(private val context: Context) {
                     preset = PresetReverb.PRESET_LARGEHALL
                     enabled = true
                 }
+                player.attachAuxEffect(reverb.id)
+                player.setAuxEffectSendLevel(1.0f)
                 if (isDeckA) {
                     reverbA?.release()
                     reverbA = reverb
@@ -782,73 +791,57 @@ class SeamlessDjEngine(private val context: Context) {
         }
     }
 
-    private fun setupPlayerA(track: Track, startMs: Long) {
+    private suspend fun setupIncomingPlayer(track: Track, isDeckA: Boolean, startMs: Long): Boolean = withContext(Dispatchers.Main) {
+        if (track.streamUrl.isBlank() || track.isYouTube()) return@withContext false
+        val deferred = CompletableDeferred<Boolean>()
         try {
-            playerA?.release()
-            playerA = null
-            if (track.streamUrl.isNotBlank() && !track.isYouTube()) {
-                playerA = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .build()
-                    )
-                    setDataSource(track.streamUrl)
-                    setVolume(0.0f, 0.0f)
-                    prepareAsync()
-                    setOnPreparedListener { mp ->
-                        try {
-                            initAudioEffects(mp, isDeckA = true)
-                            mp.seekTo(startMs.toInt())
-                            mp.start()
-                        } catch (e: Exception) {
-                            Log.e("SeamlessDjEngine", "OnPrepared setup A error", e)
-                        }
-                    }
-                    setOnErrorListener { _, what, extra ->
-                        Log.e("SeamlessDjEngine", "MediaPlayer setup A error: what=$what, extra=$extra")
-                        true
-                    }
-                }
+            if (isDeckA) {
+                equalizerA?.release(); equalizerA = null
+                playerA?.release(); playerA = null
+            } else {
+                equalizerB?.release(); equalizerB = null
+                playerB?.release(); playerB = null
             }
-        } catch (e: Exception) {
-            Log.e("SeamlessDjEngine", "Failed setup Player A", e)
-        }
-    }
 
-    private fun setupPlayerB(track: Track, startMs: Long) {
-        try {
-            playerB?.release()
-            playerB = null
-            if (track.streamUrl.isNotBlank() && !track.isYouTube()) {
-                playerB = MediaPlayer().apply {
-                    setAudioAttributes(
-                        AudioAttributes.Builder()
-                            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
-                            .setUsage(AudioAttributes.USAGE_MEDIA)
-                            .build()
-                    )
-                    setDataSource(track.streamUrl)
-                    setVolume(0.0f, 0.0f)
-                    prepareAsync()
-                    setOnPreparedListener { mp ->
-                        try {
-                            initAudioEffects(mp, isDeckA = false)
-                            mp.seekTo(startMs.toInt())
-                            mp.start()
-                        } catch (e: Exception) {
-                            Log.e("SeamlessDjEngine", "OnPrepared setup B error", e)
-                        }
-                    }
-                    setOnErrorListener { _, what, extra ->
-                        Log.e("SeamlessDjEngine", "MediaPlayer setup B error: what=$what, extra=$extra")
-                        true
+            val player = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .build()
+                )
+                setDataSource(track.streamUrl)
+                setVolume(0.0f, 0.0f)
+                setOnPreparedListener { mp ->
+                    try {
+                        initAudioEffects(mp, isDeckA = isDeckA)
+                        mp.seekTo(startMs.toInt())
+                        mp.start()
+                        if (isDeckA) playerA = mp else playerB = mp
+                        if (!deferred.isCompleted) deferred.complete(true)
+                    } catch (e: Exception) {
+                        Log.e("SeamlessDjEngine", "OnPrepared error for Deck ${if (isDeckA) "A" else "B"}", e)
+                        if (!deferred.isCompleted) deferred.complete(false)
                     }
                 }
+                setOnErrorListener { _, what, extra ->
+                    Log.e("SeamlessDjEngine", "MediaPlayer error for Deck ${if (isDeckA) "A" else "B"}: what=$what, extra=$extra")
+                    if (!deferred.isCompleted) deferred.complete(false)
+                    true
+                }
+                prepareAsync()
+            }
+            if (isDeckA) playerA = player else playerB = player
+
+            withTimeoutOrNull(3500L) {
+                deferred.await()
+            } ?: run {
+                Log.w("SeamlessDjEngine", "Timeout preparing incoming player for Deck ${if (isDeckA) "A" else "B"}")
+                false
             }
         } catch (e: Exception) {
-            Log.e("SeamlessDjEngine", "Failed setup Player B", e)
+            Log.e("SeamlessDjEngine", "Failed to setup incoming player", e)
+            false
         }
     }
 
