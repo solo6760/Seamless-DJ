@@ -4,6 +4,8 @@ import android.content.Context
 import android.media.AudioAttributes
 import android.media.MediaPlayer
 import android.media.PlaybackParams
+import android.media.audiofx.Equalizer
+import android.media.audiofx.PresetReverb
 import android.os.Build
 import android.util.Log
 import com.example.audio.processor.*
@@ -17,6 +19,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.sin
 
 import com.example.audio.phase_vocoder.AudioStretchProcessor
 import com.example.audio.phase_vocoder.BasicSpeedStretchProcessor
@@ -59,6 +62,10 @@ class SeamlessDjEngine(private val context: Context) {
 
     private var playerA: MediaPlayer? = null
     private var playerB: MediaPlayer? = null
+    private var equalizerA: Equalizer? = null
+    private var equalizerB: Equalizer? = null
+    private var reverbA: PresetReverb? = null
+    private var reverbB: PresetReverb? = null
 
     private val _engineState = MutableStateFlow(DjEngineState())
     val engineState: StateFlow<DjEngineState> = _engineState.asStateFlow()
@@ -68,6 +75,7 @@ class SeamlessDjEngine(private val context: Context) {
     private var transitionJob: Job? = null
 
     private val beatDetectionEngine = BeatDetectionEngine(context)
+    private val eqFadeProcessor = EqFadeProcessor()
     private val multiBandEqProcessor = MultiBandEqProcessor()
     private val filterSweepProcessor = FilterSweepProcessor()
     private val riserSweepProcessor = RiserSweepProcessor()
@@ -278,31 +286,43 @@ class SeamlessDjEngine(private val context: Context) {
                 if (!state.isPlaying || state.isCrossfading || !state.automixEnabled) continue
 
                 val newElapsed = state.segmentElapsedSec + 1
-                val targetSegment = state.segmentTotalSec
-
                 val currentTrack = state.currentTrack
+                
                 val trackDurationSec = if (currentTrack != null && currentTrack.durationMs > 0) {
                     (currentTrack.durationMs / 1000).toInt()
-                } else targetSegment
+                } else 210
+
+                // If segmentDurationSec is 0, play full track until natural outro
+                val isFullTrackMode = djSettings.segmentDurationSec <= 0
+                val targetSegment = if (isFullTrackMode) trackDurationSec else djSettings.segmentDurationSec
 
                 // 1. Phrase-Aligned Transition Check (Requirement 1 & 6)
                 val currentTrackPosMs = ((currentTrack?.introOffsetSec ?: 0) + newElapsed) * 1000L
                 val currentPhrase = currentTrack?.phraseBoundaries?.lastOrNull { it.timestampMs <= currentTrackPosMs }
                 val currentPhraseLabel = currentPhrase?.type?.displayName ?: "Playing"
 
-                // Check if approaching outro phrase or target segment limit
+                // Check if approaching detected outro phrase boundary
                 val outroBoundary = currentTrack?.phraseBoundaries?.firstOrNull { it.type == PhraseType.OUTRO }
-                val isAtOutroPhrase = outroBoundary != null && currentTrackPosMs >= outroBoundary.timestampMs - (djSettings.crossfadeDurationSec * 1000L)
+                val isAtOutroPhrase = outroBoundary != null && currentTrackPosMs >= (outroBoundary.timestampMs - (djSettings.crossfadeDurationSec * 1000L))
 
-                val isAtSegmentLimit = newElapsed >= max(10, targetSegment - djSettings.crossfadeDurationSec)
+                // Check if near track end (for Full Track Mode or long playback)
+                val isNearTrackEnd = trackDurationSec > 30 && newElapsed >= max(10, trackDurationSec - djSettings.crossfadeDurationSec - 15)
+
+                // Check segment limit
+                val isAtSegmentLimit = !isFullTrackMode && newElapsed >= max(10, targetSegment - djSettings.crossfadeDurationSec)
 
                 _engineState.value = state.copy(
                     segmentElapsedSec = newElapsed,
+                    segmentTotalSec = targetSegment,
                     currentPhraseLabel = currentPhraseLabel
                 )
 
-                if (isAtOutroPhrase || isAtSegmentLimit) {
-                    val triggerReason = if (isAtOutroPhrase) "Natural Outro Phrase Transition" else "Automix Beat Blend"
+                if (isAtOutroPhrase || (isFullTrackMode && isNearTrackEnd) || isAtSegmentLimit) {
+                    val triggerReason = when {
+                        isAtOutroPhrase -> "Natural Outro Phrase Transition"
+                        isFullTrackMode -> "Full Track Natural Outro"
+                        else -> "Automix Phrase-Aligned Blend"
+                    }
                     triggerSeamlessCrossfade(reason = triggerReason)
                 }
             }
@@ -344,7 +364,7 @@ class SeamlessDjEngine(private val context: Context) {
     }
 
     /**
-     * Content-Aware Multi-Band Seamless Transition Execution (Requirements 1, 3, 6, 7, 9, 10).
+     * Content-Aware Multi-Band Seamless Transition Execution (Requirements 1, 3, 4, 5, 6, 7, 8, 9, 10, 11).
      */
     private suspend fun triggerSeamlessCrossfade(reason: String) {
         val state = _engineState.value
@@ -380,18 +400,46 @@ class SeamlessDjEngine(private val context: Context) {
             statusMessage = "$reason • $syncStatusText"
         )
 
-        // 3. Calculate LUFS Loudness Normalization Gains (Target: -14.0 LUFS)
+        // 3. Calculate LUFS Loudness Normalization Gains (Requirement 8 - Target: -14.0 LUFS)
         val outgoingLufs = currentTrack.lufs
-        val outgoingLufsScale = Math.pow(10.0, ((-14.0f - outgoingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.3f, 1.8f)
-
         val incomingLufs = incomingTrack.lufs
-        val incomingLufsScale = Math.pow(10.0, ((-14.0f - incomingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.3f, 1.8f)
+        val lufsDiffDb = incomingLufs - outgoingLufs
+
+        val outgoingLufsScale = Math.pow(10.0, ((-14.0f - outgoingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.4f, 1.6f)
+        val incomingLufsScale = Math.pow(10.0, ((-14.0f - incomingLufs) / 20.0f).toDouble()).toFloat().coerceIn(0.4f, 1.6f)
+
+        // Comprehensive Debug Logging (Requirement 1 & 11)
+        Log.i("SeamlessDjEngine", """
+            ================================================================================
+            [DJ TRANSITION TRIGGERED] Reason: $reason
+            [Transition Type] ${selectedTransition.displayName} (${selectedTransition.name})
+            [Compatibility Score] ${(compatibilityScore * 100).toInt()}% (Raw: $compatibilityScore)
+            [Compatibility Breakdown]:
+              - Harmonic Match: ${(decision.harmonicScore * 100).toInt()}% (${currentTrack.musicalKey} -> ${incomingTrack.musicalKey})
+              - BPM Match: ${(decision.bpmScore * 100).toInt()}% (${currentTrack.bpm} -> ${incomingTrack.bpm} BPM)
+              - Energy Match: ${(decision.energyScore * 100).toInt()}% (${currentTrack.energyScore} -> ${incomingTrack.energyScore})
+              - Spectral Flux Match: ${(decision.spectralFluxScore * 100).toInt()}%
+            [Transition Duration] ${fadeDurationMs / 1000}s (Drop Offset: ${decision.dropStartMs / 1000}s)
+            [Loudness Normalization (LUFS)]:
+              - Outgoing (${currentTrack.title}): ${String.format("%.1f", outgoingLufs)} LUFS
+              - Incoming (${incomingTrack.title}): ${String.format("%.1f", incomingLufs)} LUFS
+              - Difference: ${String.format("%+.1f", lufsDiffDb)} dB -> Scale: Out=${String.format("%.2f", outgoingLufsScale)}, In=${String.format("%.2f", incomingLufsScale)}
+            [Decision Explanation] ${decision.explanation}
+            ================================================================================
+        """.trimIndent())
 
         // 4. Setup incoming player at aligned onset drop point
         if (incomingDeck == ActiveDeck.DECK_B) {
             setupPlayerB(incomingTrack, alignedInMs)
         } else {
             setupPlayerA(incomingTrack, alignedInMs)
+        }
+
+        // Attach Reverb for ECHO_OUT if selected
+        if (selectedTransition == TransitionType.ECHO_OUT) {
+            val outgoingPlayer = if (currentActive == ActiveDeck.DECK_A) playerA else playerB
+            attachReverb(outgoingPlayer, currentActive == ActiveDeck.DECK_A)
+            Log.d("SeamlessDjEngine", "[ECHO_OUT Active] 3.5s Reverb decay tail attached to Deck ${if (currentActive == ActiveDeck.DECK_A) "A" else "B"}")
         }
 
         // Tempo matching & pitch shift (Requirement 10)
@@ -412,9 +460,12 @@ class SeamlessDjEngine(private val context: Context) {
             }
         }
 
-        // 5. Run smooth multi-band EQ / filter / riser transition loop
-        val steps = 30
+        // 5. Run smooth DSP transition loop with hardware AudioFx & software composite gains
+        val steps = 36
         val stepDelay = (fadeDurationMs / steps).coerceAtLeast(35L)
+
+        val outEq = if (currentActive == ActiveDeck.DECK_A) equalizerA else equalizerB
+        val inEq = if (incomingDeck == ActiveDeck.DECK_B) equalizerB else equalizerA
 
         for (i in 0..steps) {
             val progress = i.toFloat() / steps
@@ -426,22 +477,34 @@ class SeamlessDjEngine(private val context: Context) {
                     Pair(outV, inV)
                 }
                 TransitionType.EQ_FADE -> {
-                    val eqGains = multiBandEqProcessor.calculateGains(
-                        progress = progress,
-                        outgoingProfile = currentTrack.frequencyProfile,
-                        incomingProfile = incomingTrack.frequencyProfile
+                    // Aggressive bass swap: 0dB to -15dB low-shelf crossover
+                    val eqVolumes = eqFadeProcessor.calculateEqVolumes(progress)
+                    applyEqualizerGains(
+                        eq = outEq,
+                        lowBandGainRatio = eqVolumes.outgoingBassGain,
+                        midBandGainRatio = 1.0f,
+                        highBandGainRatio = 1.0f
                     )
-                    // Bass swap: composite gain reflecting low + mid + high isolation
-                    val outComposite = eqGains.outgoingOverallVol * (0.5f * eqGains.outgoingLowGain + 0.3f * eqGains.outgoingMidGain + 0.2f * eqGains.outgoingHighGain)
-                    val inComposite = eqGains.incomingOverallVol * (0.5f * eqGains.incomingLowGain + 0.3f * eqGains.incomingMidGain + 0.2f * eqGains.incomingHighGain)
-                    Pair(outComposite.coerceIn(0f, 1f), inComposite.coerceIn(0f, 1f))
+                    applyEqualizerGains(
+                        eq = inEq,
+                        lowBandGainRatio = eqVolumes.incomingBassGain,
+                        midBandGainRatio = 1.0f,
+                        highBandGainRatio = 1.0f
+                    )
+                    Pair(
+                        eqVolumes.outgoingMainVolume * (0.6f * eqVolumes.outgoingBassGain + 0.4f),
+                        eqVolumes.incomingMainVolume * (0.6f * eqVolumes.incomingBassGain + 0.4f)
+                    )
                 }
                 TransitionType.FILTER_SWEEP -> {
                     val fs = filterSweepProcessor.calculateFilterState(progress)
+                    applyFilterSweepHardware(outEq, isOutgoing = true, progress = progress)
+                    applyFilterSweepHardware(inEq, isOutgoing = false, progress = progress)
                     Pair(fs.outgoingVolume, fs.incomingVolume)
                 }
                 TransitionType.RISER_SWEEP -> {
                     val rs = riserSweepProcessor.calculateRiserState(progress)
+                    applyFilterSweepHardware(outEq, isOutgoing = true, progress = progress)
                     Pair(rs.outgoingVolume, rs.incomingVolume)
                 }
                 TransitionType.ECHO_OUT -> {
@@ -493,6 +556,12 @@ class SeamlessDjEngine(private val context: Context) {
             } catch (e: Exception) {}
         }
 
+        // Reset Equalizers and release Reverb effects
+        resetEqualizer(equalizerA)
+        resetEqualizer(equalizerB)
+        releaseReverb(isDeckA = true)
+        releaseReverb(isDeckA = false)
+
         // 6. Stop outgoing player, update queue and active deck
         if (currentActive == ActiveDeck.DECK_A) {
             try { playerA?.stop(); playerA?.reset() } catch (e: Exception) {}
@@ -529,6 +598,152 @@ class SeamlessDjEngine(private val context: Context) {
     private fun Track.isYouTube(): Boolean =
         source == TrackSource.YOUTUBE || sourceUrl.contains("youtube") || sourceUrl.contains("youtu.be")
 
+    private fun initAudioEffects(player: MediaPlayer?, isDeckA: Boolean) {
+        if (player == null) return
+        try {
+            val sessionId = player.audioSessionId
+            if (sessionId != 0) {
+                val eq = Equalizer(0, sessionId).apply {
+                    enabled = true
+                }
+                if (isDeckA) {
+                    equalizerA?.release()
+                    equalizerA = eq
+                } else {
+                    equalizerB?.release()
+                    equalizerB = eq
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SeamlessDjEngine", "Could not initialize Equalizer for Deck ${if (isDeckA) "A" else "B"}", e)
+        }
+    }
+
+    private fun applyEqualizerGains(
+        eq: Equalizer?,
+        lowBandGainRatio: Float,
+        midBandGainRatio: Float = 1.0f,
+        highBandGainRatio: Float = 1.0f
+    ) {
+        if (eq == null || !eq.enabled) return
+        try {
+            val numBands = eq.numberOfBands.toInt()
+            val minLevel = eq.bandLevelRange?.get(0)?.toInt() ?: -1500
+            val maxLevel = eq.bandLevelRange?.get(1)?.toInt() ?: 1500
+
+            // Low Band (Band 0): 0dB down to -1500 mB (-15dB)
+            if (numBands > 0) {
+                val lowDb = (20.0 * kotlin.math.log10(lowBandGainRatio.coerceIn(0.001f, 1.0f).toDouble())).toFloat()
+                val lowMb = (lowDb * 100).toInt().coerceIn(minLevel, maxLevel).toShort()
+                eq.setBandLevel(0, lowMb)
+            }
+
+            // Mid Band (Band 1 & 2): 250Hz - 2.5kHz
+            if (numBands > 1) {
+                val midDb = (20.0 * kotlin.math.log10(midBandGainRatio.coerceIn(0.001f, 1.0f).toDouble())).toFloat()
+                val midMb = (midDb * 100).toInt().coerceIn(minLevel, maxLevel).toShort()
+                eq.setBandLevel(1, midMb)
+                if (numBands > 2) eq.setBandLevel(2, midMb)
+            }
+
+            // High Band (Band 3 & 4): > 2.5kHz
+            if (numBands > 3) {
+                val highDb = (20.0 * kotlin.math.log10(highBandGainRatio.coerceIn(0.001f, 1.5f).toDouble())).toFloat()
+                val highMb = (highDb * 100).toInt().coerceIn(minLevel, maxLevel).toShort()
+                eq.setBandLevel(3, highMb)
+                if (numBands > 4) eq.setBandLevel(4, highMb)
+            }
+        } catch (e: Exception) {
+            Log.w("SeamlessDjEngine", "Error applying equalizer gains", e)
+        }
+    }
+
+    private fun applyFilterSweepHardware(
+        eq: Equalizer?,
+        isOutgoing: Boolean,
+        progress: Float
+    ) {
+        if (eq == null || !eq.enabled) return
+        try {
+            val numBands = eq.numberOfBands.toInt()
+            val minLevel = eq.bandLevelRange?.get(0)?.toInt() ?: -1500
+            val maxLevel = eq.bandLevelRange?.get(1)?.toInt() ?: 1500
+
+            if (isOutgoing) {
+                // HPF sweep: progressively cut low, then mid, boost high resonant tone
+                val band0 = (-1500f * (progress / 0.3f).coerceAtMost(1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band1 = (-1500f * ((progress - 0.2f) / 0.4f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band2 = (-1200f * ((progress - 0.5f) / 0.4f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band3 = (+400f * sin(progress * Math.PI.toFloat())).toInt().coerceIn(minLevel, maxLevel).toShort()
+                if (numBands > 0) eq.setBandLevel(0, band0)
+                if (numBands > 1) eq.setBandLevel(1, band1)
+                if (numBands > 2) eq.setBandLevel(2, band2)
+                if (numBands > 3) eq.setBandLevel(3, band3)
+            } else {
+                // LPF sweep: start with lows cut, progressively open bands 2, 1, 0
+                val band0 = (-1500f * (1f - (progress - 0.5f) / 0.5f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band1 = (-1500f * (1f - (progress - 0.3f) / 0.5f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                val band2 = (-1200f * (1f - progress / 0.5f).coerceIn(0f, 1f)).toInt().coerceIn(minLevel, maxLevel).toShort()
+                if (numBands > 0) eq.setBandLevel(0, band0)
+                if (numBands > 1) eq.setBandLevel(1, band1)
+                if (numBands > 2) eq.setBandLevel(2, band2)
+            }
+        } catch (e: Exception) {
+            Log.w("SeamlessDjEngine", "Error applying filter sweep hardware EQ", e)
+        }
+    }
+
+    private fun resetEqualizer(eq: Equalizer?) {
+        if (eq == null || !eq.enabled) return
+        try {
+            val numBands = eq.numberOfBands.toInt()
+            for (b in 0 until numBands) {
+                eq.setBandLevel(b.toShort(), 0)
+            }
+        } catch (e: Exception) {}
+    }
+
+    private fun attachReverb(player: MediaPlayer?, isDeckA: Boolean) {
+        if (player == null) return
+        try {
+            val sessionId = player.audioSessionId
+            if (sessionId != 0) {
+                val reverb = PresetReverb(0, sessionId).apply {
+                    preset = PresetReverb.PRESET_LARGEHALL
+                    enabled = true
+                }
+                if (isDeckA) {
+                    reverbA?.release()
+                    reverbA = reverb
+                } else {
+                    reverbB?.release()
+                    reverbB = reverb
+                }
+            }
+        } catch (e: Exception) {
+            Log.w("SeamlessDjEngine", "Could not initialize PresetReverb", e)
+        }
+    }
+
+    private fun releaseReverb(isDeckA: Boolean) {
+        try {
+            if (isDeckA) {
+                reverbA?.release()
+                reverbA = null
+            } else {
+                reverbB?.release()
+                reverbB = null
+            }
+        } catch (e: Exception) {}
+    }
+
+    fun triggerManualTransition(forcedType: TransitionType? = null) {
+        transitionJob?.cancel()
+        transitionJob = scope.launch {
+            triggerSeamlessCrossfade(forcedType?.let { "Manual ${it.displayName}" } ?: "Manual Transition Trigger")
+        }
+    }
+
     private fun prepareAndStartDeckA(track: Track) {
         try {
             playerA?.release()
@@ -546,6 +761,7 @@ class SeamlessDjEngine(private val context: Context) {
                     prepareAsync()
                     setOnPreparedListener { mp ->
                         try {
+                            initAudioEffects(mp, isDeckA = true)
                             mp.seekTo(track.introOffsetSec * 1000)
                             mp.start()
                         } catch (e: Exception) {
@@ -583,6 +799,7 @@ class SeamlessDjEngine(private val context: Context) {
                     prepareAsync()
                     setOnPreparedListener { mp ->
                         try {
+                            initAudioEffects(mp, isDeckA = true)
                             mp.seekTo(startMs.toInt())
                             mp.start()
                         } catch (e: Exception) {
@@ -617,6 +834,7 @@ class SeamlessDjEngine(private val context: Context) {
                     prepareAsync()
                     setOnPreparedListener { mp ->
                         try {
+                            initAudioEffects(mp, isDeckA = false)
                             mp.seekTo(startMs.toInt())
                             mp.start()
                         } catch (e: Exception) {
@@ -638,12 +856,20 @@ class SeamlessDjEngine(private val context: Context) {
         tickerJob?.cancel()
         transitionJob?.cancel()
         try {
+            equalizerA?.release()
+            equalizerA = null
+            reverbA?.release()
+            reverbA = null
             playerA?.stop()
             playerA?.release()
             playerA = null
         } catch (e: Exception) {}
 
         try {
+            equalizerB?.release()
+            equalizerB = null
+            reverbB?.release()
+            reverbB = null
             playerB?.stop()
             playerB?.release()
             playerB = null

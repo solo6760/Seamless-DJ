@@ -43,6 +43,7 @@ fun DjSettingsScreen(
     var bpmSync by remember(currentSettings) { mutableStateOf(currentSettings.autoBpmMatch) }
     var usePhaseVocoderState by remember(currentSettings) { mutableStateOf(currentSettings.usePhaseVocoder) }
     var partyLights by remember(currentSettings) { mutableStateOf(currentSettings.partyLightsEnabled) }
+    var debugModeState by remember(currentSettings) { mutableStateOf(currentSettings.debugModeEnabled) }
 
     var apiKeyInput by remember(currentApiKey) { mutableStateOf(currentApiKey ?: "") }
     var isApiKeyVisible by remember { mutableStateOf(false) }
@@ -340,16 +341,17 @@ fun DjSettingsScreen(
                     AnimatedVisibility(visible = showMoreAdvanced) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
                             // Segment Duration
+                            val segmentDisplay = if (segmentSec.roundToInt() <= 0) "Full Song (Natural Outro)" else "${segmentSec.roundToInt()}s"
                             Text(
-                                text = "Track Segment Duration (${segmentSec.roundToInt()}s)",
+                                text = "Track Segment Duration: $segmentDisplay",
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
                             Slider(
                                 value = segmentSec,
                                 onValueChange = { segmentSec = it },
-                                valueRange = 45f..180f,
-                                steps = 8,
+                                valueRange = 0f..300f,
+                                steps = 9,
                                 colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
                             )
 
@@ -522,7 +524,98 @@ fun DjSettingsScreen(
                 }
             }
 
-            // 6. About Section Card
+            // 6. DJ Debug Mode & Transition Auditioning Card
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                shape = RoundedCornerShape(16.dp),
+                border = CardDefaults.outlinedCardBorder()
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.BugReport,
+                                    contentDescription = "Debug Mode",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text(
+                                    text = "DJ Transition Debug Mode",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                            Text(
+                                text = "Displays live compatibility score breakdown (Key, BPM, Energy, Flux) & real-time DSP HUD on Deck.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(
+                            checked = debugModeState,
+                            onCheckedChange = { debugModeState = it },
+                            colors = SwitchDefaults.colors(checkedTrackColor = MaterialTheme.colorScheme.primary),
+                            modifier = Modifier.testTag("debug_mode_switch")
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Text(
+                        text = "Instant Transition Audition (Test DSP Effects):",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.EQ_FADE) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("EQ Fade\n(-15dB Bass)", fontSize = 10.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.FILTER_SWEEP) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Filter\n(HPF Sweep)", fontSize = 10.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.ECHO_OUT) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Echo Out\n(Reverb Tail)", fontSize = 10.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.CROSSFADE) },
+                            modifier = Modifier.weight(1f),
+                            contentPadding = PaddingValues(horizontal = 4.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("Crossfade\n(Snappy 9s)", fontSize = 10.sp, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+                        }
+                    }
+                }
+            }
+
+            // 7. About Section Card
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -563,7 +656,8 @@ fun DjSettingsScreen(
                         autoBpmMatch = bpmSync,
                         usePhaseVocoder = usePhaseVocoderState,
                         partyLightsEnabled = partyLights,
-                        isDarkMode = isDarkModeState
+                        isDarkMode = isDarkModeState,
+                        debugModeEnabled = debugModeState
                     )
                     onBackToDeck()
                 },

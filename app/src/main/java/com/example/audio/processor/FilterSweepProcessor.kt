@@ -4,37 +4,55 @@ import kotlin.math.cos
 import kotlin.math.sin
 
 /**
- * Filter Sweep Transition Processor
+ * Filter Sweep Transition Processor (Requirement 4).
  *
- * Applies resonant high-pass filter sweep for less compatible tracks:
- * Outgoing track: Cutoff frequency sweeps from 20Hz (full range) up to 5000Hz (bass/mids cut, highs pass).
- * Incoming track: Cutoff frequency sweeps from 5000Hz down to 20Hz (full range restored).
- * Sweeps over ~3–5 seconds to mask harmonic/tempo clashes.
+ * Outgoing track: High-pass filter sweeping from 20Hz -> 4000Hz over 5-8 seconds.
+ * Strips out bass and mids, leaving only crisp highs and vocals.
+ *
+ * Incoming track: Low-pass filter sweeping from 4000Hz down to 20Hz over 5-8 seconds.
+ * Gradually introduces full spectrum from top sparkle down to booming bass.
+ *
+ * Resonant Q (Q = 3.5 - 4.5) creates a pronounced "DJ mixer knob tone" with resonant peak emphasis.
  */
 class FilterSweepProcessor {
 
     data class FilterState(
         val outgoingHighPassCutoffHz: Float,
+        val incomingLowPassCutoffHz: Float,
         val outgoingVolume: Float,
-        val incomingHighPassCutoffHz: Float,
-        val incomingVolume: Float
+        val incomingVolume: Float,
+        val resonanceQ: Float = 4.0f,
+        val isResonanceActive: Boolean = true
     )
 
     fun calculateFilterState(progress: Float): FilterState {
         val p = progress.coerceIn(0f, 1f)
 
-        // Rapid 3-5s filter sweep curve
-        val outgoingCutoff = 20f + (5000f - 20f) * (p * p) // Quadratic sweep up
-        val incomingCutoff = 5000f - (5000f - 20f) * (p * (2f - p)) // Inverse quadratic sweep down
+        // Exponential sweep curves (20Hz -> 4000Hz)
+        // Outgoing HPF: 20Hz -> 4000Hz (cuts bass at p=0.2, cuts mids at p=0.5, leaving only highs > 2kHz)
+        val outgoingHpf = 20f + (4000f - 20f) * (p * p)
 
-        val outgoingVol = cos(p * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
-        val incomingVol = sin(p * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
+        // Incoming LPF: 4000Hz -> 20Hz (inverse sweep bringing in full frequency range)
+        val incomingLpf = 4000f - (4000f - 20f) * (p * (2f - p))
+
+        // Dynamic resonant Q peak emphasis around mid-sweep (p = 0.5)
+        val dynamicQ = 3.0f + 2.0f * sin(p * Math.PI.toFloat())
+
+        // Volume blend with high-pass attenuation factor
+        val rawOutVol = cos(p * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
+        val rawInVol = sin(p * Math.PI.toFloat() / 2f).coerceIn(0f, 1f)
+
+        // Boost presence tone slightly due to resonance
+        val outResonanceBoost = 1.0f + 0.25f * sin(p * Math.PI.toFloat())
+        val outgoingVol = (rawOutVol * outResonanceBoost).coerceIn(0f, 1.15f)
 
         return FilterState(
-            outgoingHighPassCutoffHz = outgoingCutoff,
+            outgoingHighPassCutoffHz = outgoingHpf,
+            incomingLowPassCutoffHz = incomingLpf,
             outgoingVolume = outgoingVol,
-            incomingHighPassCutoffHz = incomingCutoff,
-            incomingVolume = incomingVol
+            incomingVolume = rawInVol,
+            resonanceQ = dynamicQ,
+            isResonanceActive = true
         )
     }
 }

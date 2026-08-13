@@ -14,10 +14,10 @@ object SmartPlaylistOptimizer {
     /**
      * Calculates multi-dimensional compatibility score between currentTrack and nextTrack.
      * Dimensions:
-     * - Harmonic (Camelot key + confidence): 45% weight
+     * - Harmonic (Camelot key + confidence): 40% weight
      * - BPM similarity: 25% weight
      * - Energy continuity: 15% weight
-     * - Spectral flux correlation (rhythmic / timbral feel): 15% weight
+     * - Spectral flux correlation (rhythmic / timbral feel): 20% weight
      */
     fun calculateCompatibilityScore(currentTrack: Track, nextTrack: Track): Float {
         // 1. Camelot Key Score (0.0 to 1.0) with confidence
@@ -44,7 +44,7 @@ object SmartPlaylistOptimizer {
             else -> 0.25f
         }
 
-        // 4. Spectral Flux Matching (0.0 to 1.0)
+        // 4. Spectral Flux Matching (0.0 to 1.0) (Requirement 6)
         val flux1 = currentTrack.getSpectralFluxVector()
         val flux2 = nextTrack.getSpectralFluxVector()
         val spectralFluxScore = if (flux1.isNotEmpty() && flux2.isNotEmpty()) {
@@ -53,8 +53,8 @@ object SmartPlaylistOptimizer {
             0.70f // Default fallback
         }
 
-        // Weighted combination
-        return (0.45f * camelotScore) + (0.25f * bpmSimilarity) + (0.15f * energyScore) + (0.15f * spectralFluxScore)
+        // Weighted combination: 40% Harmonic, 25% BPM, 15% Energy, 20% Flux
+        return (0.40f * camelotScore) + (0.25f * bpmSimilarity) + (0.15f * energyScore) + (0.20f * spectralFluxScore)
     }
 
     /**
@@ -88,7 +88,7 @@ object SmartPlaylistOptimizer {
             AudioDspAnalyzer.calculateSpectralFluxCorrelation(flux1, flux2)
         } else 0.70f
 
-        val overallScore = (0.45f * camelotScore) + (0.25f * bpmSimilarity) + (0.15f * energyScore) + (0.15f * spectralFluxScore)
+        val overallScore = (0.40f * camelotScore) + (0.25f * bpmSimilarity) + (0.15f * energyScore) + (0.20f * spectralFluxScore)
 
         val optimalType = selectContextualTransition(
             harmonicScore = camelotScore,
@@ -102,20 +102,21 @@ object SmartPlaylistOptimizer {
             CamelotWheel.calculateOptimalPitchShift(currentTrack.musicalKey, nextTrack.musicalKey)
         } else 0
 
+        // Tightened transition durations (Requirement 7: snappy 8-10s crossfade, 16s EQ fade, 6s filter sweep)
         val transitionDurationMs = when (optimalType) {
-            TransitionType.CROSSFADE -> 12_000L
+            TransitionType.CROSSFADE -> 9_000L
             TransitionType.EQ_FADE -> 16_000L
-            TransitionType.FILTER_SWEEP -> 14_000L
-            TransitionType.RISER_SWEEP -> 18_000L
+            TransitionType.FILTER_SWEEP -> 6_500L
+            TransitionType.RISER_SWEEP -> 14_000L
             TransitionType.ECHO_OUT -> 8_000L
         }
 
         val explanation = when (optimalType) {
-            TransitionType.CROSSFADE -> "High harmonic & rhythmic match (${(overallScore * 100).toInt()}%). Seamless equal-power blend."
-            TransitionType.EQ_FADE -> "Matched keys (${currentTrack.musicalKey} ➔ ${nextTrack.musicalKey}). 3-band EQ bass swap active."
-            TransitionType.FILTER_SWEEP -> "Timbral shift detected (flux ${(spectralFluxScore * 100).toInt()}%). High-pass sweep masking spectrum."
+            TransitionType.CROSSFADE -> "High harmonic & rhythmic match (${(overallScore * 100).toInt()}%). Tight snappy equal-power blend."
+            TransitionType.EQ_FADE -> "Matched keys (${currentTrack.musicalKey} ➔ ${nextTrack.musicalKey}). 3-band EQ aggressive -15dB bass swap."
+            TransitionType.FILTER_SWEEP -> "Timbral shift detected (flux ${(spectralFluxScore * 100).toInt()}%). Resonant HPF/LPF sweep masking spectrum."
             TransitionType.RISER_SWEEP -> "Energy jump (+${abs(energyDiff)}). Resonant riser sweep bridging build-up."
-            TransitionType.ECHO_OUT -> "Key or tempo contrast. Echo out reverb decay tail bridging track entry."
+            TransitionType.ECHO_OUT -> "Key/tempo contrast. Echo out 3.5s reverb tail decay into incoming track."
         }
 
         val dropMs = (nextTrack.optimalDropOffsetSec * 1000L).coerceAtLeast(0L)

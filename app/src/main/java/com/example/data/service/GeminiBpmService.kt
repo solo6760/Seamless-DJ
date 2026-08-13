@@ -26,8 +26,10 @@ class GeminiBpmService(
 
     private val modelCandidates = listOf(
         "gemini-3.1-flash-lite",
+        "gemini-2.5-flash-lite",
+        "gemini-1.5-flash-lite",
+        "gemini-2.0-flash-lite",
         "gemini-2.5-flash",
-        "gemini-2.0-flash",
         "gemini-1.5-flash"
     )
 
@@ -88,6 +90,8 @@ class GeminiBpmService(
                                 return@withContext parsed
                             }
                         }
+                    } else {
+                        Log.w("GeminiBpmService", "Model $model returned HTTP ${response.code}: ${response.message}. Trying next candidate...")
                     }
                 }
             } catch (e: Exception) {
@@ -152,6 +156,8 @@ class GeminiBpmService(
                                 return@withContext parsed
                             }
                         }
+                    } else {
+                        Log.w("GeminiBpmService", "Model $model returned HTTP ${response.code}: ${response.message}. Trying next candidate...")
                     }
                 }
             } catch (e: Exception) {

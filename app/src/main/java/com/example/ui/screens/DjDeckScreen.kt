@@ -602,6 +602,187 @@ fun DjDeckScreen(
                 }
             }
 
+            // 2.5 DJ TRANSITION DEBUG HUD WIDGET (Requirement 1 & Debug Mode)
+            if (djSettings.debugModeEnabled) {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(2.dp, RoundedCornerShape(16.dp))
+                        .testTag("dj_debug_hud_card"),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+                    shape = RoundedCornerShape(16.dp),
+                    border = CardDefaults.outlinedCardBorder()
+                ) {
+                    Column(modifier = Modifier.padding(14.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Icon(
+                                    imageVector = Icons.Default.BugReport,
+                                    contentDescription = "DJ Debug HUD",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = "DJ Transition Debug HUD",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            val timeUntilTransition = if (engineState.isCrossfading) {
+                                "🎛️ Crossfading ${(engineState.crossfadeProgress * 100).toInt()}%"
+                            } else {
+                                val remaining = (engineState.segmentTotalSec - engineState.segmentElapsedSec).coerceAtLeast(0)
+                                if (engineState.segmentTotalSec > 0) "${remaining}s to transition" else "Playing Full Song"
+                            }
+
+                            Text(
+                                text = timeUntilTransition,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        val activeDec = if (activeTrack != null && nextTrack != null) {
+                            com.example.util.SmartPlaylistOptimizer.createTransitionDecision(activeTrack, nextTrack)
+                        } else engineState.activeTransitionDecision
+
+                        if (activeDec != null) {
+                            Text(
+                                text = "Selected: ${activeDec.type.iconSymbol} ${activeDec.type.displayName} • ${(activeDec.overallScore * 100).toInt()}% match",
+                                style = MaterialTheme.typography.bodyMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Text(
+                                text = activeDec.explanation,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            // Compatibility score breakdown chips
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Key (Harmonic)", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${(activeDec.harmonicScore * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                        Text("${activeTrack?.musicalKey ?: "8A"}➔${nextTrack?.musicalKey ?: "8A"}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("BPM Match", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${(activeDec.bpmScore * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                        Text("${activeTrack?.bpm ?: 124}➔${nextTrack?.bpm ?: 124}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Energy Fit", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${(activeDec.energyScore * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                        Text("Δ${kotlin.math.abs((activeTrack?.energyScore ?: 50) - (nextTrack?.energyScore ?: 50))}", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                                Surface(
+                                    color = MaterialTheme.colorScheme.surface,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Column(modifier = Modifier.padding(6.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("Spectral Flux", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        Text("${(activeDec.spectralFluxScore * 100).toInt()}%", fontSize = 11.sp, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.primary)
+                                        Text("Groove", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurface)
+                                    }
+                                }
+                            }
+
+                            Spacer(modifier = Modifier.height(6.dp))
+
+                            // DSP Realtime status info
+                            val lufsDiff = ((nextTrack?.lufs ?: -14f) - (activeTrack?.lufs ?: -14f))
+                            Text(
+                                text = "Loudness: Out ${String.format("%.1f", activeTrack?.lufs ?: -14f)} LUFS | In ${String.format("%.1f", nextTrack?.lufs ?: -14f)} LUFS (Δ${String.format("%+.1f", lufsDiff)}dB)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        } else {
+                            Text(
+                                text = "Playing single track. Queue more tracks to view live transition analysis.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(modifier = Modifier.height(8.dp))
+
+                        // Quick Test Buttons
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.EQ_FADE) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(2.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("EQ -15dB", fontSize = 9.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.FILTER_SWEEP) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(2.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Filter HPF", fontSize = 9.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.ECHO_OUT) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(2.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Echo Out", fontSize = 9.sp)
+                            }
+                            OutlinedButton(
+                                onClick = { viewModel.triggerTransition(com.example.data.model.TransitionType.CROSSFADE) },
+                                modifier = Modifier.weight(1f),
+                                contentPadding = PaddingValues(2.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Crossfade", fontSize = 9.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
             // 3. LARGE PLAYBACK CONTROLS (Generous > 48dp Touch Targets for Party Use)
             Card(
                 modifier = Modifier

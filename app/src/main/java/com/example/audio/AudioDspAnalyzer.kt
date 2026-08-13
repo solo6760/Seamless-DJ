@@ -660,7 +660,7 @@ class AudioDspAnalyzer(private val context: Context) {
 
             // Detect Drop / Chorus: sudden energy surge after intro or breakdown
             if (energyDelta > 0.08f && currE > avgEnergy * 1.15f) {
-                val type = if (boundaries.none { it.type == PhraseType.CHORUS }) PhraseType.CHORUS else PhraseType.DROP
+                val type = PhraseType.CHORUS
                 boundaries.add(PhraseBoundary(currentMs, type, 0.85f, normalizedEnergy, "Energy Drop / Chorus"))
                 lastBoundaryMs = currentMs
             }

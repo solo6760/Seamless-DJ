@@ -8,6 +8,9 @@ interface PlaylistDao {
     @Query("SELECT * FROM playlists")
     fun getAllPlaylists(): Flow<List<PlaylistEntity>>
 
+    @Query("SELECT * FROM playlists")
+    suspend fun getAllPlaylistsSync(): List<PlaylistEntity>
+
     @Query("SELECT * FROM playlist_tracks WHERE playlistId = :playlistId ORDER BY trackOrder ASC")
     fun getTracksForPlaylist(playlistId: String): Flow<List<TrackEntity>>
 
@@ -52,6 +55,9 @@ interface GuestRequestDao {
 interface SettingsDao {
     @Query("SELECT * FROM dj_settings WHERE id = 1")
     fun getSettings(): Flow<DjSettingsEntity?>
+
+    @Query("SELECT * FROM dj_settings WHERE id = 1")
+    suspend fun getSettingsSync(): DjSettingsEntity?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun saveSettings(settings: DjSettingsEntity)

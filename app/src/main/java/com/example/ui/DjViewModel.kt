@@ -20,7 +20,7 @@ import kotlinx.coroutines.launch
 class DjViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
-    val repository = DjRepository(db)
+    val repository = DjRepository(db, application)
     val audioEngine = SeamlessDjEngine(application)
     val apiKeyManager = ApiKeyManager(application)
     val geminiBpmService = GeminiBpmService()
@@ -252,21 +252,22 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
                 _userMessage.value = "Imported YouTube Playlist: ${newPlaylist.name} (${newPlaylist.tracks.size} tracks)"
                 _importUrlInput.value = ""
             } else {
-                val parsedTrack = repository.parseAndImportUrl(url)
+                val parsedTrack: Track? = repository.parseAndImportUrl(url)
                 if (parsedTrack != null) {
                     val currentPl = _selectedPlaylist.value ?: playlists.value.firstOrNull()
                     if (currentPl != null) {
-                        val updatedTracks = currentPl.tracks + parsedTrack
+                        val updatedTracks: List<Track> = currentPl.tracks + parsedTrack
                         val updatedPl = currentPl.copy(tracks = updatedTracks)
                         _selectedPlaylist.value = updatedPl
                         audioEngine.setQueueAndPlay(updatedTracks, 0)
                         _userMessage.value = "Imported track: ${parsedTrack.title}"
                     } else {
+                        val newTrackList: List<Track> = listOf(parsedTrack)
                         repository.createCustomPlaylist(
                             name = "Imported Party Stream",
                             description = "Custom track imported from web link",
                             sourceUrl = url,
-                            tracks = listOf(parsedTrack)
+                            tracks = newTrackList
                         )
                         _userMessage.value = "Created custom playlist with imported track!"
                     }
@@ -316,7 +317,8 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
         autoBpmMatch: Boolean,
         usePhaseVocoder: Boolean = settings.value.usePhaseVocoder,
         partyLightsEnabled: Boolean,
-        isDarkMode: Boolean = settings.value.isDarkMode
+        isDarkMode: Boolean = settings.value.isDarkMode,
+        debugModeEnabled: Boolean = settings.value.debugModeEnabled
     ) {
         viewModelScope.launch {
             val current = settings.value
@@ -327,10 +329,11 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
                 autoBpmMatch = autoBpmMatch,
                 usePhaseVocoder = usePhaseVocoder,
                 partyLightsEnabled = partyLightsEnabled,
-                isDarkMode = isDarkMode
+                isDarkMode = isDarkMode,
+                debugModeEnabled = debugModeEnabled
             )
             repository.saveSettings(updated)
-            _userMessage.value = "DJ settings updated! Segments: ${segmentDurationSec}s | Drop: ${startOffsetSec}s | Fade: ${crossfadeDurationSec}s | Phase Vocoder: ${if (usePhaseVocoder) "On" else "Off"}"
+            _userMessage.value = "DJ settings updated! Segments: ${segmentDurationSec}s | Fade: ${crossfadeDurationSec}s | Debug Mode: ${if (debugModeEnabled) "On" else "Off"}"
         }
     }
 
@@ -373,6 +376,17 @@ class DjViewModel(application: Application) : AndroidViewModel(application) {
     fun runABComparisonTest() {
         audioEngine.runABComparisonTest { msg ->
             _userMessage.value = msg
+        }
+    }
+
+    fun triggerTransition(forcedType: TransitionType? = null) {
+        audioEngine.triggerManualTransition(forcedType)
+    }
+
+    fun toggleDebugMode(enabled: Boolean) {
+        viewModelScope.launch {
+            val current = settings.value
+            repository.saveSettings(current.copy(debugModeEnabled = enabled))
         }
     }
 

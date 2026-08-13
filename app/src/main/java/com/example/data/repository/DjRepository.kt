@@ -19,6 +19,8 @@ class DjRepository(private val db: AppDatabase, private val context: Context) {
         }
     }
 
+    val allPlaylists: Flow<List<Playlist>> get() = playlists
+
     val guestRequests: Flow<List<GuestRequest>> = db.guestRequestDao().getAllRequests().map { entities ->
         entities.map { it.toModel() }
     }
@@ -48,6 +50,30 @@ class DjRepository(private val db: AppDatabase, private val context: Context) {
         if (existingSettings == null) {
             db.settingsDao().saveSettings(DjSettings().toEntity())
         }
+    }
+
+    suspend fun seedSampleDataIfNeeded() = populateInitialDataIfEmpty()
+
+    suspend fun parseAndImportUrl(url: String): Track? = withContext(Dispatchers.IO) {
+        val cleanUrl = url.trim()
+        if (cleanUrl.isBlank()) return@withContext null
+        val id = "imported_${System.currentTimeMillis()}"
+        val isSc = cleanUrl.lowercase().contains("soundcloud")
+        Track(
+            id = id,
+            title = if (isSc) "SoundCloud Stream Track" else "Web Stream Track",
+            artist = "DJ Stream Guest",
+            albumArtUrl = "https://images.unsplash.com/photo-1516450360452-9312f5e86fc7?w=600&auto=format&fit=crop",
+            durationMs = 210000L,
+            streamUrl = if (cleanUrl.endsWith(".mp3") || cleanUrl.endsWith(".flac")) cleanUrl else "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3",
+            bpm = 124,
+            bpmStatus = BpmStatus.UNKNOWN,
+            musicalKey = "8A / Fm",
+            source = if (isSc) TrackSource.SOUNDCLOUD else TrackSource.YOUTUBE,
+            sourceUrl = cleanUrl,
+            introOffsetSec = 16,
+            segmentDurationSec = 90
+        )
     }
 
     suspend fun getTracksForPlaylist(playlistId: String): List<Track> = withContext(Dispatchers.IO) {
@@ -641,7 +667,8 @@ private fun DjSettings.toEntity(): DjSettingsEntity = DjSettingsEntity(
     usePhaseVocoder = usePhaseVocoder,
     partyLightsEnabled = partyLightsEnabled,
     partyRoomCode = partyRoomCode,
-    isDarkMode = isDarkMode
+    isDarkMode = isDarkMode,
+    debugModeEnabled = debugModeEnabled
 )
 
 private fun DjSettingsEntity.toModel(): DjSettings = DjSettings(
@@ -652,5 +679,6 @@ private fun DjSettingsEntity.toModel(): DjSettings = DjSettings(
     usePhaseVocoder = usePhaseVocoder,
     partyLightsEnabled = partyLightsEnabled,
     partyRoomCode = partyRoomCode,
-    isDarkMode = isDarkMode
+    isDarkMode = isDarkMode,
+    debugModeEnabled = debugModeEnabled
 )

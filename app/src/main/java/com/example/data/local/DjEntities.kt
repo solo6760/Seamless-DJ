@@ -53,10 +53,11 @@ data class DjSettingsEntity(
     val startOffsetSec: Int,
     val crossfadeDurationSec: Int,
     val autoBpmMatch: Boolean,
-    val usePhaseVocoder: Boolean = true,
+    val usePhaseVocoder: Boolean = false,
     val partyLightsEnabled: Boolean,
     val partyRoomCode: String,
-    val isDarkMode: Boolean = true
+    val isDarkMode: Boolean = true,
+    val debugModeEnabled: Boolean = false
 )
 
 @Entity(tableName = "song_bpm_cache")
