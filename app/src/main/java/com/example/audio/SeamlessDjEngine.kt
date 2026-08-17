@@ -148,7 +148,7 @@ class SeamlessDjEngine(private val context: Context) {
         val remainingQueue = if (tracks.size > 1) {
             tracks.drop(startIndex + 1) + tracks.take(startIndex)
         } else {
-            emptyList()
+            listOf(current)
         }
 
         scope.launch {
@@ -292,24 +292,39 @@ class SeamlessDjEngine(private val context: Context) {
                     (currentTrack.durationMs / 1000).toInt()
                 } else 210
 
-                // If segmentDurationSec is 0, play full track until natural outro
-                val isFullTrackMode = djSettings.segmentDurationSec <= 0
-                val targetSegment = if (isFullTrackMode) trackDurationSec else djSettings.segmentDurationSec
+                val targetSegment = djSettings.segmentDurationSec.coerceIn(45, 300)
 
-                // 1. Phrase-Aligned Transition Check (Requirement 1 & 6)
+                // Current track position in ms (taking introOffsetSec into account)
                 val currentTrackPosMs = ((currentTrack?.introOffsetSec ?: 0) + newElapsed) * 1000L
                 val currentPhrase = currentTrack?.phraseBoundaries?.lastOrNull { it.timestampMs <= currentTrackPosMs }
                 val currentPhraseLabel = currentPhrase?.type?.displayName ?: "Playing"
 
-                // Check if approaching detected outro phrase boundary
-                val outroBoundary = currentTrack?.phraseBoundaries?.firstOrNull { it.type == PhraseType.OUTRO }
-                val isAtOutroPhrase = outroBoundary != null && currentTrackPosMs >= (outroBoundary.timestampMs - (djSettings.crossfadeDurationSec * 1000L))
+                // 1. Natural Phrase Boundary Detection in the transition window [targetSegment - 10s, targetSegment + 5s]
+                // (e.g., at ~80s into playback for default 90s segment, check if a phrase boundary exists before ~95s)
+                val windowStartSec = max(10, targetSegment - 10)
+                val windowEndSec = targetSegment + 5
 
-                // Check if near track end (for Full Track Mode or long playback)
-                val isNearTrackEnd = trackDurationSec > 30 && newElapsed >= max(10, trackDurationSec - djSettings.crossfadeDurationSec - 15)
+                val matchingPhrase = currentTrack?.phraseBoundaries?.firstOrNull { boundary ->
+                    val boundaryElapsedSec = ((boundary.timestampMs / 1000L) - (currentTrack.introOffsetSec)).toInt()
+                    boundaryElapsedSec in windowStartSec..windowEndSec
+                }
 
-                // Check segment limit
-                val isAtSegmentLimit = !isFullTrackMode && newElapsed >= max(10, targetSegment - djSettings.crossfadeDurationSec)
+                val isAtPhraseBoundary = if (matchingPhrase != null) {
+                    val boundaryElapsedSec = ((matchingPhrase.timestampMs / 1000L) - (currentTrack.introOffsetSec)).toInt()
+                    newElapsed >= boundaryElapsedSec
+                } else false
+
+                // 2. Beat boundary check within window
+                val isAtBeatBoundary = if (!isAtPhraseBoundary && currentTrack != null && currentTrack.beatTimesMs.isNotEmpty() && newElapsed in windowStartSec until targetSegment) {
+                    val closestBeatMs = currentTrack.beatTimesMs.minByOrNull { kotlin.math.abs(it - currentTrackPosMs) }
+                    closestBeatMs != null && kotlin.math.abs(closestBeatMs - currentTrackPosMs) < 600L && newElapsed >= targetSegment - 5
+                } else false
+
+                // 3. Fallback: Trigger transition at exact segment duration limit (~90s)
+                val isAtSegmentLimit = newElapsed >= targetSegment
+
+                // 4. Track outro protection: if track is shorter than segment duration, transition near track end
+                val isNearTrackEnd = trackDurationSec > 15 && newElapsed >= max(10, trackDurationSec - djSettings.crossfadeDurationSec - 5)
 
                 _engineState.value = state.copy(
                     segmentElapsedSec = newElapsed,
@@ -317,11 +332,12 @@ class SeamlessDjEngine(private val context: Context) {
                     currentPhraseLabel = currentPhraseLabel
                 )
 
-                if (isAtOutroPhrase || (isFullTrackMode && isNearTrackEnd) || isAtSegmentLimit) {
+                if (isAtPhraseBoundary || isAtBeatBoundary || isAtSegmentLimit || isNearTrackEnd) {
                     val triggerReason = when {
-                        isAtOutroPhrase -> "Natural Outro Phrase Transition"
-                        isFullTrackMode -> "Full Track Natural Outro"
-                        else -> "Automix Phrase-Aligned Blend"
+                        isAtPhraseBoundary -> "Phrase-Aligned (${matchingPhrase?.type?.displayName ?: "Phrase"})"
+                        isAtBeatBoundary -> "Beat-Aligned Transition"
+                        isNearTrackEnd -> "Track Outro Transition"
+                        else -> "Segment Mark Transition (${targetSegment}s)"
                     }
                     triggerSeamlessCrossfade(reason = triggerReason)
                 }
@@ -387,7 +403,7 @@ class SeamlessDjEngine(private val context: Context) {
             incomingDropOffsetMs = decision.dropStartMs
         )
 
-        val fadeDurationMs = decision.transitionDurationMs.coerceAtLeast(6000L)
+        val fadeDurationMs = decision.transitionDurationMs.coerceIn(8000L, 12000L)
         val syncStatusText = "${selectedTransition.iconSymbol} ${selectedTransition.displayName} (${(compatibilityScore * 100).toInt()}%)"
 
         _engineState.value = state.copy(
@@ -576,7 +592,14 @@ class SeamlessDjEngine(private val context: Context) {
             state.queue
         }
 
-        val subsequentTrack = updatedQueue.firstOrNull() ?: state.currentTrack
+        // Infinite loop-back queue strategy: append outgoing track to the end of the queue so queue never runs dry
+        val loopBackQueue = if (updatedQueue.isNotEmpty()) {
+            updatedQueue + currentTrack
+        } else {
+            listOf(currentTrack)
+        }
+
+        val subsequentTrack = loopBackQueue.firstOrNull() ?: incomingTrack
 
         _engineState.value = _engineState.value.copy(
             currentTrack = incomingTrack,
@@ -587,8 +610,9 @@ class SeamlessDjEngine(private val context: Context) {
             isCrossfading = false,
             crossfadeProgress = 0f,
             segmentElapsedSec = 0,
+            segmentTotalSec = djSettings.segmentDurationSec.coerceIn(45, 300),
             activeBpm = incomingTrack.bpm,
-            queue = updatedQueue,
+            queue = loopBackQueue,
             deckASpinning = incomingDeck == ActiveDeck.DECK_A,
             deckBSpinning = incomingDeck == ActiveDeck.DECK_B,
             currentPhraseLabel = incomingTrack.phraseBoundaries.firstOrNull()?.type?.displayName ?: "Drop",

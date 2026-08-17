@@ -197,4 +197,117 @@ class DspTransitionUnitTest {
         assertEquals("Should align to closest outgoing beat 1000ms", 1000L, outBeat)
         assertEquals("Should align to closest incoming beat 960ms", 960L, inBeat)
     }
+
+    @Test
+    fun testDjSettingsShortSegmentDefaults() {
+        val settings = DjSettings()
+        assertEquals("Default segment duration must be 90s", 90, settings.segmentDurationSec)
+        assertTrue("Segment duration must be in 90-120s range", settings.segmentDurationSec in 90..120)
+        assertEquals("Default crossfade duration must be 10s (8-12s range)", 10, settings.crossfadeDurationSec)
+    }
+
+    @Test
+    fun testTransitionFadesWithin8To12Seconds() {
+        val trackA = Track(id = "1", title = "A", artist = "A", bpm = 126, musicalKey = "8A", energyScore = 80)
+        val trackB = Track(id = "2", title = "B", artist = "B", bpm = 126, musicalKey = "8A", energyScore = 80)
+        val trackC = Track(id = "3", title = "C", artist = "C", bpm = 90, musicalKey = "2B", energyScore = 20)
+
+        val decisionA = SmartPlaylistOptimizer.createTransitionDecision(trackA, trackB)
+        val decisionB = SmartPlaylistOptimizer.createTransitionDecision(trackA, trackC)
+
+        assertTrue("Transition duration must be >= 8s", decisionA.transitionDurationMs >= 8_000L)
+        assertTrue("Transition duration must be <= 12s", decisionA.transitionDurationMs <= 12_000L)
+        assertTrue("Incompatible transition duration must be >= 8s", decisionB.transitionDurationMs >= 8_000L)
+        assertTrue("Incompatible transition duration must be <= 12s", decisionB.transitionDurationMs <= 12_000L)
+    }
+
+    @Test
+    fun testShortSegmentTransitionTimingAndPhraseBoundary() {
+        val targetSegment = 90
+        val windowStart = targetSegment - 10 // 80s
+        val windowEnd = targetSegment + 5   // 95s
+
+        // Track with a chorus/outro boundary at 85s
+        val phrasesWithBoundary = listOf(
+            PhraseBoundary(0L, PhraseType.INTRO, 0.9f, 0.3f, "Intro"),
+            PhraseBoundary(85000L, PhraseType.CHORUS, 0.9f, 0.8f, "Chorus End")
+        )
+        val trackWithBoundary = Track(
+            id = "t_boundary",
+            title = "Track with Boundary",
+            artist = "Artist",
+            durationMs = 210000L,
+            introOffsetSec = 0,
+            phraseBoundaries = phrasesWithBoundary
+        )
+
+        val matchingPhrase = trackWithBoundary.phraseBoundaries.firstOrNull { boundary ->
+            val boundaryElapsedSec = ((boundary.timestampMs / 1000L) - trackWithBoundary.introOffsetSec).toInt()
+            boundaryElapsedSec in windowStart..windowEnd
+        }
+        assertNotNull("Should detect phrase boundary in 80s..95s window", matchingPhrase)
+        assertEquals(85, (matchingPhrase!!.timestampMs / 1000L).toInt())
+
+        // Track without boundary in window should fall back to 90s target
+        val phrasesWithoutBoundary = listOf(
+            PhraseBoundary(0L, PhraseType.INTRO, 0.9f, 0.3f, "Intro"),
+            PhraseBoundary(40000L, PhraseType.CHORUS, 0.9f, 0.8f, "Chorus")
+        )
+        val trackWithoutBoundary = Track(
+            id = "t_no_boundary",
+            title = "Track without Boundary in window",
+            artist = "Artist",
+            durationMs = 210000L,
+            introOffsetSec = 0,
+            phraseBoundaries = phrasesWithoutBoundary
+        )
+        val matchingPhraseFallback = trackWithoutBoundary.phraseBoundaries.firstOrNull { boundary ->
+            val boundaryElapsedSec = ((boundary.timestampMs / 1000L) - trackWithoutBoundary.introOffsetSec).toInt()
+            boundaryElapsedSec in windowStart..windowEnd
+        }
+        assertNull("Should find no phrase boundary in 80..95s window", matchingPhraseFallback)
+    }
+
+    @Test
+    fun testInfiniteQueueLoopBackSimulation() {
+        val tracks = listOf(
+            Track(id = "1", title = "Track 1", artist = "A"),
+            Track(id = "2", title = "Track 2", artist = "B"),
+            Track(id = "3", title = "Track 3", artist = "C")
+        )
+
+        var current = tracks[0]
+        var next = tracks[1]
+        var queue = tracks.drop(1) // [2, 3]
+
+        // Advance 1: Track 1 -> Track 2
+        var updatedQueue = if (queue.isNotEmpty() && queue.first() == next) queue.drop(1) else queue
+        var loopBackQueue = updatedQueue + current
+        current = next
+        next = loopBackQueue.first()
+        queue = loopBackQueue
+        assertEquals("Track 2", current.title)
+        assertEquals("Track 3", next.title)
+        assertEquals(listOf("Track 3", "Track 1"), queue.map { it.title })
+
+        // Advance 2: Track 2 -> Track 3
+        updatedQueue = if (queue.isNotEmpty() && queue.first() == next) queue.drop(1) else queue
+        loopBackQueue = updatedQueue + current
+        current = next
+        next = loopBackQueue.first()
+        queue = loopBackQueue
+        assertEquals("Track 3", current.title)
+        assertEquals("Track 1", next.title)
+        assertEquals(listOf("Track 1", "Track 2"), queue.map { it.title })
+
+        // Advance 3: Track 3 -> Track 1 (Loop back)
+        updatedQueue = if (queue.isNotEmpty() && queue.first() == next) queue.drop(1) else queue
+        loopBackQueue = updatedQueue + current
+        current = next
+        next = loopBackQueue.first()
+        queue = loopBackQueue
+        assertEquals("Track 1", current.title)
+        assertEquals("Track 2", next.title)
+        assertEquals(listOf("Track 2", "Track 3"), queue.map { it.title })
+    }
 }

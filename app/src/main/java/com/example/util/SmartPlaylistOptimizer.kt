@@ -102,13 +102,13 @@ object SmartPlaylistOptimizer {
             CamelotWheel.calculateOptimalPitchShift(currentTrack.musicalKey, nextTrack.musicalKey)
         } else 0
 
-        // Tightened transition durations (Requirement 7: snappy 8-10s crossfade, 16s EQ fade, 6s filter sweep)
+        // Snappy short-segment transition durations (8-12s range)
         val transitionDurationMs = when (optimalType) {
             TransitionType.CROSSFADE -> 9_000L
-            TransitionType.EQ_FADE -> 16_000L
-            TransitionType.FILTER_SWEEP -> 6_500L
-            TransitionType.RISER_SWEEP -> 14_000L
-            TransitionType.ECHO_OUT -> 8_000L
+            TransitionType.EQ_FADE -> 11_000L
+            TransitionType.FILTER_SWEEP -> 8_000L
+            TransitionType.RISER_SWEEP -> 10_000L
+            TransitionType.ECHO_OUT -> 8_500L
         }
 
         val explanation = when (optimalType) {

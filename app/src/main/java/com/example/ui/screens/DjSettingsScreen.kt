@@ -341,18 +341,25 @@ fun DjSettingsScreen(
                     AnimatedVisibility(visible = showMoreAdvanced) {
                         Column(modifier = Modifier.padding(top = 12.dp)) {
                             // Segment Duration
-                            val segmentDisplay = if (segmentSec.roundToInt() <= 0) "Full Song (Natural Outro)" else "${segmentSec.roundToInt()}s"
+                            val segmentDisplay = "${segmentSec.roundToInt()}s"
                             Text(
                                 text = "Track Segment Duration: $segmentDisplay",
                                 style = MaterialTheme.typography.titleSmall,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
+                            Text(
+                                text = "Short-segment mixing (90–120s) keeps party energy high with active DJ transitions.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(modifier = Modifier.height(4.dp))
                             Slider(
                                 value = segmentSec,
                                 onValueChange = { segmentSec = it },
-                                valueRange = 0f..300f,
-                                steps = 9,
-                                colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary)
+                                valueRange = 60f..180f,
+                                steps = 7,
+                                colors = SliderDefaults.colors(thumbColor = MaterialTheme.colorScheme.primary),
+                                modifier = Modifier.testTag("segment_duration_slider")
                             )
 
                             Spacer(modifier = Modifier.height(8.dp))
